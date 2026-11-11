@@ -35,7 +35,7 @@ A user attaches a contract (text PDF or DOCX) to a Jira work item and clicks Ext
 - Forge SQL: no foreign keys, one statement per query, `?` parameters, SELECT 5 s, request 1 MiB, response 4 MiB.
 - `@forge/events` 2.x+: events wrapped in `body`; 50 events or 200 KB per push, so pass ids, not text.
 - Teamwork Graph (Preview): `api.asUser().requestTeamworkGraph(query, variables, operationName)` only. Operation names are `covenant_<name>` (name 4+ chars). HTTP 200 can carry errors; missing scopes silently drop rows; page until `hasNextPage` is false; never call it from a scheduled or queued function.
-- rovo:mcp (Preview): tools are action keys; external access is off until a site or org admin enables it; endpoint `https://mcp.atlassian.com/forge/<appId>`.
+- rovo:mcp (Preview): tools are action keys; external access is off until a site or org admin enables it; endpoint `https://mcp.atlassian.com/forge/<appId>`. Spike S4: tools are listed as `<key>_development` outside production, so never hard-code tool names; the caller is `context.principal.accountId` (not in `payload.context`); `api.asUser()` works inside the action and runs as the caller.
 - unpdf's main entry cannot be bundled by Forge (it calls `import.meta.resolve('pdfjs-dist/...')`); import `getDocument` from `unpdf/pdfjs` instead.
 
 ## Environment
