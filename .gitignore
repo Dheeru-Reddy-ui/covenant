@@ -1,0 +1,17 @@
+node_modules/
+dist/
+coverage/
+.forge/
+*.log
+.env
+.env.*
+!.env.example
+
+# Contract files never go in git: CUAD downloads and anything a person drops in to test.
+eval/data/
+samples/private/
+*.pdf
+*.docx
+!docs/**/*.pdf
+!samples/fictional/*.pdf
+!samples/fictional/*.docx

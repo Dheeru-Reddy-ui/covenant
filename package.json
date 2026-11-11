@@ -1,0 +1,39 @@
+{
+  "name": "covenant",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Covenant: contract obligations as dated, owned, clause-cited Jira work items (Codegeist 2026).",
+  "license": "MIT",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "npm test --workspace @covenant/core",
+    "test:watch": "npm run test:watch --workspace @covenant/core",
+    "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck --workspace @covenant/core",
+    "check": "npm run typecheck && npm test",
+    "lint:forge": "forge lint",
+    "spike:local": "tsx scripts/local-extract.ts",
+    "samples": "tsx scripts/make-samples.ts"
+  },
+  "dependencies": {
+    "@forge/api": "^8.5.0",
+    "@forge/bridge": "^7.3.0",
+    "@forge/llm": "^1.0.10",
+    "@forge/react": "^12.5.0",
+    "@forge/resolver": "^2.0.2",
+    "@forge/sql": "^4.0.10",
+    "mammoth": "^1.13.0",
+    "react": "^18.2.0",
+    "unpdf": "^2.1.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.2.64",
+    "docx": "^9.15.3",
+    "pdf-lib": "^1.17.1",
+    "tsx": "^4.23.15",
+    "typescript": "~5.9.0"
+  }
+}

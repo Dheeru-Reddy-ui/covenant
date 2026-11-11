@@ -1,0 +1,74 @@
+# Covenant: Phase 0 spike manifest.
+# It declares every module the product will need (llm, sql, rovo:mcp) from the
+# first deploy, because adding llm or sql later forces a major version upgrade.
+#
+# app.id was set by `forge register covenant` (Developer Space dheeru-dev).
+app:
+  id: ari:cloud:ecosystem::app/0eb73671-31a0-4410-ae90-4d8ba0607caa
+  runtime:
+    name: nodejs22.x
+
+modules:
+  jira:issuePanel:
+    - key: covenant-spike-panel
+      resource: main
+      resolver:
+        function: resolver
+      render: native
+      title: Covenant spikes
+      icon: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
+
+  # One per app. Only the claude family exists today.
+  llm:
+    - key: covenant-llm
+      model:
+        - claude
+
+  # Forge SQL. No foreign keys, one statement per query.
+  sql:
+    - key: main
+      engine: mysql
+
+  # S4: one harmless read-only tool, exposed through the Atlassian MCP server.
+  action:
+    - key: covenant-ping
+      name: Covenant ping
+      function: spikePing
+      actionVerb: GET
+      description: >
+        Checks that the Covenant app is installed and reachable. Use it only
+        when asked to test the Covenant connection. Returns a small status
+        object and reads no contract data.
+      inputs:
+        note:
+          title: Note
+          type: string
+          required: false
+          description: Optional short text. Only its length is echoed back.
+
+  # One per app, name at most 30 characters, tools are action keys.
+  rovo:mcp:
+    - key: covenant-mcp
+      name: Covenant
+      tools:
+        - covenant-ping
+
+  function:
+    - key: resolver
+      handler: index.handler
+    - key: spikePing
+      handler: index.spikePing
+
+resources:
+  - key: main
+    path: src/frontend/index.tsx
+
+permissions:
+  scopes:
+    # S1: read the work item and download its attachments.
+    - read:jira-work
+    # S3: Teamwork Graph, one scope per object type the query touches.
+    # A missing graph scope does not fail: it silently returns less data.
+    - read:graph:issue:jira
+    - read:graph:issue-status:jira
+    - read:graph:user:atlassian
