@@ -24,7 +24,6 @@ import {
   type TermEndConvention,
   type TermFact,
   type TermProblem,
-  describeConvention,
   termBounds,
 } from './terms';
 
@@ -373,8 +372,8 @@ function resolveOnce(rule: RuleTiming, ctx: ResolveContext, calendar: BusinessCa
         label: `${isEnd ? 'end' : 'start'} of term ${bounds.value.index + 1}`,
       };
       dependsOn = bounds.value.dependsOn;
+      // The term's own trace names the end convention whenever one applied.
       lead = [...bounds.value.trace];
-      if (isEnd) lead.push(`convention: ${describeConvention(conventions.termEnd)}`);
       break;
     }
     case 'event': {

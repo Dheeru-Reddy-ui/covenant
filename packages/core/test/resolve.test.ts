@@ -90,6 +90,17 @@ describe('resolveRule: one-off rules', () => {
     expect(r.conventions.termEnd).toBe('day_before_anniversary');
   });
 
+  it('names the term-end convention once, and not at all when the contract states the end date', () => {
+    const computed = resolveRule(timing(), ctx());
+    const computedTrace = computed.status === 'resolved' ? (computed.occurrences[0]?.trace ?? []) : [];
+    expect(computedTrace.filter((line) => line.includes('day before the anniversary'))).toHaveLength(1);
+
+    const stated = resolveRule(timing(), ctx({ terms: { ...baseTerms, initialTerm: null, initialTermEnd: '2024-12-31' } }));
+    const statedTrace = stated.status === 'resolved' ? (stated.occurrences[0]?.trace ?? []) : [];
+    expect(statedTrace.join(' ')).toContain('stated in the contract');
+    expect(statedTrace.join(' ')).not.toContain('anniversary');
+  });
+
   it('flags a date that falls on a weekend, and leaves it there by default', () => {
     // 2024-10-02 is a Wednesday; a 91-day notice lands on Tuesday; 94 days lands on Saturday 2024-09-28.
     const rule = timing({ offset: { count: 94, unit: 'day', direction: 'before' } });

@@ -19,6 +19,9 @@ export * from './llm';
 export * from './reading';
 export * from './critic';
 export * from './extract';
+export * from './schedule';
+export * from './review';
+export * from './workitem';
 export {
   AnchorEventSchema,
   ClauseSchema,

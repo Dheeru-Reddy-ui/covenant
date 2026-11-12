@@ -1,6 +1,6 @@
-# Covenant: Phase 0 spike manifest.
-# It declares every module the product will need (llm, sql, rovo:mcp) from the
-# first deploy, because adding llm or sql later forces a major version upgrade.
+# Covenant manifest.
+# llm, sql and rovo:mcp were declared from the first deploy, because adding llm
+# or sql later forces a major version upgrade.
 #
 # app.id was set by `forge register covenant` (Developer Space dheeru-dev).
 app:
@@ -10,13 +10,19 @@ app:
 
 modules:
   jira:issuePanel:
-    - key: covenant-spike-panel
+    - key: covenant-panel
       resource: main
       resolver:
         function: resolver
       render: native
-      title: Covenant spikes
+      title: Covenant
       icon: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
+
+  # Extraction runs here, not in the 25 s resolver: the Extract button only queues it.
+  consumer:
+    - key: extraction-consumer
+      queue: covenant-extraction
+      function: extractionWorker
 
   # One per app. Only the claude family exists today.
   llm:
@@ -56,6 +62,9 @@ modules:
   function:
     - key: resolver
       handler: index.handler
+    - key: extractionWorker
+      handler: index.extractionWorker
+      timeoutSeconds: 900
     - key: spikePing
       handler: index.spikePing
 
@@ -65,8 +74,10 @@ resources:
 
 permissions:
   scopes:
-    # S1: read the work item and download its attachments.
+    # Read the work item and download its attachments.
     - read:jira-work
+    # Create the child work items a reviewer approves, as that reviewer. Nothing is written without an approval.
+    - write:jira-work
     # S3: Teamwork Graph, one scope per object type the query touches.
     # A missing graph scope does not fail: it silently returns less data.
     - read:graph:issue:jira
