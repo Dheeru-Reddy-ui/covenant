@@ -6,6 +6,7 @@ import { windowFor } from '../decisions/brief';
 import { loggableError } from '../errors';
 import { asApp, childIssueType, createChild, getIssue } from '../jira';
 import { DAILY_LAST_RUN, getLeadDays, putJson } from '../settings';
+import { backfillClauseSections } from './sections';
 
 /**
  * The daily check. It recomputes every contract's notice window and stored due
@@ -74,7 +75,7 @@ export async function runDailyCheck(source: DailySummary['source']): Promise<Dai
         daysLeft: win.daysLeft,
         termEnd: win.termEnd,
         timing: notice ? describeTiming(notice.rule) : 'the notice period in the contract',
-        clause: clause ? { quote: clause.quote, page: clause.page, pageEnd: clause.pageEnd, paginated: run.paginated } : null,
+        clause: clause ? { quote: clause.quote, page: clause.page, pageEnd: clause.pageEnd, paginated: run.paginated, section: clause.section } : null,
       });
       const req = asApp();
       const parent = await getIssue(req, contract.issueId);
@@ -96,6 +97,9 @@ export async function runDailyCheck(source: DailySummary['source']): Promise<Dai
       console.error(`daily decision item failed contract=${contract.id} error=${loggableError(error)}`);
     }
   }
+
+  // Older extractions get their clause numbers here, a few contracts a day. A failure must not stop the check.
+  await backfillClauseSections().catch((error: unknown) => console.error(`sections backfill failed error=${loggableError(error)}`));
 
   summary.ms = Date.now() - started;
   await putJson(DAILY_LAST_RUN, summary, null);

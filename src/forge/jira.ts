@@ -92,12 +92,32 @@ export async function getIssue(req: Requester, issueIdOrKey: string): Promise<Is
   };
 }
 
-/** Whether the caller can see a work item. Deleted and hidden items look the same to Jira: both are a no. */
-export async function canSeeIssue(req: Requester, issueIdOrKey: string): Promise<boolean> {
+export interface IssueHeader {
+  id: string;
+  key: string;
+  summary: string;
+}
+
+/** The work item's id, current key and title, or null when the caller cannot see it. Deleted and hidden items look the same to Jira. */
+export async function issueHeader(req: Requester, issueIdOrKey: string): Promise<IssueHeader | null> {
   const response = await req.requestJira(route`/rest/api/3/issue/${issueIdOrKey}?fields=summary`, { headers: { Accept: 'application/json' } });
-  if (response.ok) return true;
-  if (response.status === 403 || response.status === 404) return false;
-  throw await failure(response, 'checking access to a work item');
+  if (response.status === 403 || response.status === 404) return null;
+  if (!response.ok) throw await failure(response, 'checking access to a work item');
+  const issue = (await response.json()) as { id: string; key: string; fields?: { summary?: string } };
+  return { id: String(issue.id), key: issue.key, summary: issue.fields?.summary ?? '' };
+}
+
+/** Whether the caller can see a work item. */
+export async function canSeeIssue(req: Requester, issueIdOrKey: string): Promise<boolean> {
+  return (await issueHeader(req, issueIdOrKey)) !== null;
+}
+
+/** The site's address, such as https://example.atlassian.net, for links read outside Jira. */
+export async function siteBaseUrl(req: Requester): Promise<string | null> {
+  const response = await req.requestJira(route`/rest/api/3/serverInfo`, { headers: { Accept: 'application/json' } });
+  if (!response.ok) return null;
+  const info = (await response.json()) as { baseUrl?: string };
+  return info.baseUrl ? info.baseUrl.replace(/\/+$/, '') : null;
 }
 
 export async function downloadAttachment(req: Requester, attachmentId: string): Promise<Uint8Array> {

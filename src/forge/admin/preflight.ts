@@ -122,7 +122,7 @@ export async function runPreflight(accountId: string): Promise<PreflightCheck[]>
     check('rovo', 'Rovo', async () => ({
       status: 'manual',
       detail: 'Covenant cannot see from inside the app whether Rovo is on for this site.',
-      fix: 'If Rovo is on, its chat button shows in the Jira top bar. Rovo is optional: the panel, register and decisions work without it.',
+      fix: 'If Rovo is on, open Rovo chat from the Jira top bar and choose the "Covenant contract assistant" agent. Rovo is optional: the panel, register, decisions and MCP tools work without it.',
     })),
   ]);
 }

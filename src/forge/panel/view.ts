@@ -7,6 +7,7 @@ import {
   type Schedule,
   canApprove,
   currentTermIndex,
+  describeSection,
   describeTiming,
   termBounds,
 } from '../../../packages/core/src';
@@ -21,7 +22,7 @@ import type {
   ScheduleView,
   TermsView,
 } from '../../shared/panel';
-import { scheduleFor, todayUtc } from '../dates';
+import { scheduleFor } from '../dates';
 import * as repo from '../db/repo';
 import { ensureSchema } from '../db/schema';
 import { buildBrief } from '../decisions/brief';
@@ -55,7 +56,14 @@ function scheduleView(s: Schedule): ScheduleView {
 
 function clauseView(clause: repo.ClauseRow | undefined, paginated: boolean): ClauseView | null {
   if (clause === undefined) return null;
-  return { quote: clause.quote, page: clause.page, pageEnd: clause.pageEnd, paginated, ambiguous: clause.ambiguous };
+  return {
+    quote: clause.quote,
+    page: clause.page,
+    pageEnd: clause.pageEnd,
+    paginated,
+    ambiguous: clause.ambiguous,
+    section: clause.section ? describeSection(clause.section) : null,
+  };
 }
 
 function describeSecond(value: unknown): string | null {
@@ -240,10 +248,10 @@ async function runView(run: repo.RunRow, contract: repo.ContractRow, today: stri
 
 const SUPPORTED_NAME = /\.(pdf|docx)$/i;
 
-export async function loadPanel(issueId: string): Promise<PanelView> {
+/** `today` is on the viewer's calendar (see todayIn), so the countdown matches theirs. */
+export async function loadPanel(issueId: string, today: string): Promise<PanelView> {
   await ensureSchema();
   const [issue, contracts, leadDays] = await Promise.all([getIssue(asUser(), issueId), repo.listContractsForIssue(issueId), getLeadDays()]);
-  const today = todayUtc();
   const nowMs = Date.now();
 
   const contractViews: ContractView[] = [];

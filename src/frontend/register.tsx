@@ -92,7 +92,13 @@ const App = () => {
   const load = useCallback(async (days: 30 | 60 | 90 | null) => {
     setLoading(true);
     try {
-      const reply = (await invoke<Reply<RegisterView>>('register.load', { windowDays: days })) as Reply<RegisterView>;
+      let timeZone: string | undefined;
+      try {
+        timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+      } catch {
+        timeZone = undefined;
+      }
+      const reply = (await invoke<Reply<RegisterView>>('register.load', { windowDays: days, timeZone })) as Reply<RegisterView>;
       if (reply.ok) {
         setView(reply.data);
         setError(null);

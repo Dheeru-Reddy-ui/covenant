@@ -35,6 +35,8 @@ export interface ClauseView {
   paginated: boolean;
   /** The quote appears more than once and Covenant could not tell which one is meant. */
   ambiguous: boolean;
+  /** The numbered clause code found around the quote, in words, such as "clause 1.2 (Term and renewal)". */
+  section: string | null;
 }
 
 export interface FactView {

@@ -168,6 +168,21 @@ CREATE TABLE IF NOT EXISTS context_cache (
   PRIMARY KEY (contract_id, account_id)
 )`;
 
+/**
+ * The numbered clause each verified quote sits in, found by code from the text around it.
+ * A row with a null clause_number means code looked and found none. No row means it has not looked yet.
+ */
+const V010_CLAUSE_SECTION = `
+CREATE TABLE IF NOT EXISTS clause_section (
+  clause_id VARCHAR(36) NOT NULL PRIMARY KEY,
+  run_id VARCHAR(36) NOT NULL,
+  label VARCHAR(16) NULL,
+  clause_number VARCHAR(32) NULL,
+  heading VARCHAR(120) NULL,
+  found_at_ms BIGINT NOT NULL,
+  KEY idx_clause_section_run (run_id)
+)`;
+
 const migrations = migrationRunner
   .enqueue('v001_create_spike_probe', V001_SPIKE_PROBE)
   .enqueue('v002_create_contract', V002_CONTRACT)
@@ -177,7 +192,8 @@ const migrations = migrationRunner
   .enqueue('v006_create_decision', V006_DECISION)
   .enqueue('v007_create_contract_state', V007_CONTRACT_STATE)
   .enqueue('v008_create_app_setting', V008_APP_SETTING)
-  .enqueue('v009_create_context_cache', V009_CONTEXT_CACHE);
+  .enqueue('v009_create_context_cache', V009_CONTEXT_CACHE)
+  .enqueue('v010_create_clause_section', V010_CLAUSE_SECTION);
 
 let ready: Promise<void> | null = null;
 

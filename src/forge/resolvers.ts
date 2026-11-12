@@ -6,6 +6,7 @@ import { runPreflight } from './admin/preflight';
 import { startSampleWorkspace } from './admin/sample';
 import { loadAdmin, requireAdmin } from './admin/view';
 import { markRenewed, moveWorkItemDates, recordDecision, undoRenewal } from './decisions/actions';
+import { todayIn } from './dates';
 import { loadContext } from './decisions/context';
 import { loggableError, readableError } from './errors';
 import { runDailyCheck } from './jobs/daily';
@@ -75,7 +76,7 @@ const DecisionPayload = z.object({ contractId: Id, outcome: z.enum(DECISION_OUTC
 const RenewPayload = z.object({ contractId: Id, fromTermIndex: z.number().int().min(0).max(1000) });
 const ContractPayload = z.object({ contractId: Id });
 const ContextPayload = z.object({ contractId: Id, refresh: z.boolean() });
-const RegisterPayload = z.object({ windowDays: z.union([z.literal(30), z.literal(60), z.literal(90), z.null()]) });
+const RegisterPayload = z.object({ windowDays: z.union([z.literal(30), z.literal(60), z.literal(90), z.null()]), timeZone: z.string().max(64).optional() });
 const LeadDaysPayload = z.object({ days: z.number().int() });
 const SamplePayload = z.object({ projectId: Id, again: z.boolean() });
 
@@ -89,7 +90,15 @@ const resolver = new Resolver();
 
 // ---- issue panel: extraction and review ----
 
-resolver.define('panel.load', ({ context }) => answer('panel.load', () => loadPanel(callerOf(context).issueId)));
+// The browser sends its time zone so dates and countdowns follow the viewer's calendar. A bad zone just means UTC.
+const ViewerPayload = z.object({ timeZone: z.string().max(64).optional() }).optional();
+
+resolver.define('panel.load', ({ payload, context }) =>
+  answer('panel.load', () => {
+    const issueId = callerOf(context).issueId;
+    return loadPanel(issueId, todayIn(parse(ViewerPayload, payload)?.timeZone).today);
+  }),
+);
 
 resolver.define('extract.start', ({ payload, context }) =>
   answer('extract.start', () => {
@@ -184,7 +193,8 @@ resolver.define('contract.moveDates', ({ payload, context }) =>
 resolver.define('register.load', ({ payload, context }) =>
   answer('register.load', () => {
     accountOf(context);
-    return loadRegister(parse(RegisterPayload, payload).windowDays);
+    const { windowDays, timeZone } = parse(RegisterPayload, payload);
+    return loadRegister(windowDays, todayIn(timeZone).today);
   }),
 );
 

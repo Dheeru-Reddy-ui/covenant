@@ -25,6 +25,8 @@ export * from './workitem';
 export * from './decision';
 export * from './register';
 export * from './owners';
+export * from './tools';
+export * from './sections';
 export {
   AnchorEventSchema,
   ClauseSchema,

@@ -3,10 +3,12 @@ import type { AsyncEvent } from '@forge/events';
 import {
   type ExtractionSuccess,
   type FailureReason,
+  type SourceDocument,
   type VerifiedLocation,
   extractContract,
   normaliseWhitespace,
   scheduleRule,
+  sectionAt,
 } from '../../../packages/core/src';
 import { parseDocument, sha256Hex } from '../../parse/document';
 import { todayUtc } from '../dates';
@@ -102,7 +104,7 @@ async function processRun(runId: string, started: number): Promise<void> {
     return;
   }
 
-  const saved = await persist(run, contract, outcome, { pages, chars, paginated: parsed.paginated });
+  const saved = await persist(run, contract, outcome, { pages, chars, paginated: parsed.paginated, source: parsed.source });
   console.log(
     `run ${runId} needs_review obligations=${saved.obligations} needsReview=${saved.flagged} rejected=${outcome.rejected.length} ` +
       `quotes=${outcome.grounding.quotesVerified}/${outcome.grounding.quotesReturned} secondPasses=${outcome.secondPasses} pages=${pages} chars=${chars} ` +
@@ -114,26 +116,33 @@ async function persist(
   run: repo.RunRow,
   contract: repo.ContractRow,
   outcome: ExtractionSuccess,
-  doc: { pages: number; chars: number; paginated: boolean },
+  doc: { pages: number; chars: number; paginated: boolean; source: SourceDocument },
 ): Promise<{ obligations: number; flagged: number }> {
   // A redelivered or retried run may have left rows from an attempt that died part way.
   await repo.deleteRunContent(run.id);
 
   const saveClause = async (role: repo.ClauseRow['role'], location: VerifiedLocation, quote: string): Promise<string> => {
     const id = randomUUID();
-    await repo.insertClause({
-      id,
-      runId: run.id,
-      contractId: contract.id,
-      role,
-      quote,
-      page: location.page,
-      pageEnd: location.pageEnd,
-      startOffset: location.match.startOffset,
-      endOffset: location.match.endOffset,
-      occurrences: location.occurrences,
-      ambiguous: location.ambiguous,
-    });
+    // The clause number is found by code from where the quote sits, like the page.
+    const section = sectionAt(doc.source, location.match);
+    await repo.insertClause(
+      {
+        id,
+        runId: run.id,
+        contractId: contract.id,
+        role,
+        quote,
+        page: location.page,
+        pageEnd: location.pageEnd,
+        startOffset: location.match.startOffset,
+        endOffset: location.match.endOffset,
+        occurrences: location.occurrences,
+        ambiguous: location.ambiguous,
+        section,
+      },
+      section,
+      Date.now(),
+    );
     return id;
   };
 

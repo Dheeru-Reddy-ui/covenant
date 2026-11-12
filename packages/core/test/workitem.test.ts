@@ -83,6 +83,14 @@ describe('draftWorkItem', () => {
     for (const step of upcoming.trace) expect(text).toContain(step);
   });
 
+  it('names the clause when code found one', () => {
+    const section = { label: 'clause' as const, number: '1.2', heading: 'Term and renewal' };
+    const word = adfText(draftWorkItem(input({ location: { page: 1, pageEnd: 1, paginated: false, section } })).description);
+    expect(word).toContain('clause 1.2 (Term and renewal), Word file');
+    const pdf = adfText(draftWorkItem(input({ location: { page: 4, pageEnd: 4, paginated: true, section } })).description);
+    expect(pdf).toContain('clause 1.2 (Term and renewal), page 4');
+  });
+
   it('names a page range, and says a Word file has no page numbers', () => {
     expect(adfText(draftWorkItem(input({ location: { page: 3, pageEnd: 4, paginated: true } })).description)).toContain('pages 3 to 4');
     const word = adfText(draftWorkItem(input({ location: { page: 1, pageEnd: 1, paginated: false } })).description);

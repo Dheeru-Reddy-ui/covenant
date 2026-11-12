@@ -3,4 +3,4 @@ export { handler } from './forge/resolvers';
 export { handler as extractionWorker } from './forge/pipeline/worker';
 export { dailyJob } from './forge/jobs/daily';
 export { sampleWorker } from './forge/admin/sample';
-export { spikePing } from './forge/spikes/s4-ping';
+export { getClauseTool, getRenewalBriefTool, listObligationsTool, recordDecisionTool } from './forge/tools/actions';

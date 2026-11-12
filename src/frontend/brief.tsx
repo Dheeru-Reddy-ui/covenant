@@ -62,7 +62,10 @@ const OUTCOMES = [
   { value: 'terminate', label: 'Terminate' },
 ];
 
-const where = (c: ClauseView): string => (!c.paginated ? 'Word file' : c.page === c.pageEnd ? `page ${c.page}` : `pages ${c.page} to ${c.pageEnd}`);
+const where = (c: ClauseView): string => {
+  const place = !c.paginated ? 'Word file' : c.page === c.pageEnd ? `page ${c.page}` : `pages ${c.page} to ${c.pageEnd}`;
+  return c.section ? `${c.section}, ${place}` : place;
+};
 const day = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
 
 function Countdown({ brief }: { brief: BriefView }) {
@@ -351,7 +354,7 @@ export function RenewalBrief({
           <Box key={`${c.label}-${c.clause.page}-${c.clause.quote.slice(0, 20)}`} xcss={quoteBox}>
             <Stack space="space.050">
               <Text size="small">
-                <Strong>{c.label} clause</Strong>, {where(c.clause)}
+                <Strong>{c.label}</Strong>: {where(c.clause)}
               </Text>
               <Text>“{c.clause.quote}”</Text>
             </Stack>

@@ -1,5 +1,6 @@
 import { type UpdateQueryResponse, sql } from '@forge/sql';
 import type {
+  ClauseSection,
   ContractTerms,
   FactStatus,
   IsoDate,
@@ -97,6 +98,8 @@ export interface ClauseRow {
   endOffset: number;
   occurrences: number;
   ambiguous: boolean;
+  /** The numbered clause the quote sits in, found by code. Null when none was found or not yet looked for. */
+  section: ClauseSection | null;
 }
 
 export interface ObligationRow {
@@ -406,6 +409,21 @@ export async function updateRunTerms(id: string, facts: StoredFacts, terms: Cont
 
 const CLAUSE_COLUMNS = 'id, run_id, contract_id, role, quote, page, page_end, start_offset, end_offset, occurrences, ambiguous';
 
+// Every read joins the clause's section, when code has found one.
+const CLAUSE_SELECT =
+  'SELECT c.id, c.run_id, c.contract_id, c.role, c.quote, c.page, c.page_end, c.start_offset, c.end_offset, c.occurrences, c.ambiguous, ' +
+  's.label AS section_label, s.clause_number AS section_number, s.heading AS section_heading ' +
+  'FROM clause c LEFT JOIN clause_section s ON s.clause_id = c.id';
+
+const SECTION_LABELS: ReadonlySet<string> = new Set(['clause', 'section', 'article']);
+
+const toSection = (r: Raw): ClauseSection | null => {
+  const label = strOrNull(r.section_label);
+  const number = strOrNull(r.section_number);
+  if (label === null || number === null || !SECTION_LABELS.has(label)) return null;
+  return { label: label as ClauseSection['label'], number, heading: strOrNull(r.section_heading) };
+};
+
 const toClause = (r: Raw): ClauseRow => ({
   id: String(r.id),
   runId: String(r.run_id),
@@ -418,9 +436,11 @@ const toClause = (r: Raw): ClauseRow => ({
   endOffset: num(r.end_offset),
   occurrences: num(r.occurrences),
   ambiguous: bool(r.ambiguous),
+  section: toSection(r),
 });
 
-export async function insertClause(c: ClauseRow): Promise<void> {
+/** Inserts the clause and, when given, the section code found for it (null: looked, found none). */
+export async function insertClause(c: ClauseRow, section?: ClauseSection | null, nowMs = 0): Promise<void> {
   await change(
     `INSERT INTO clause (${CLAUSE_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     c.id,
@@ -435,20 +455,40 @@ export async function insertClause(c: ClauseRow): Promise<void> {
     c.occurrences,
     c.ambiguous ? 1 : 0,
   );
+  if (section !== undefined) await saveClauseSection(c.id, c.runId, section, nowMs);
+}
+
+export async function saveClauseSection(clauseId: string, runId: string, section: ClauseSection | null, nowMs: number): Promise<void> {
+  await change(
+    'INSERT IGNORE INTO clause_section (clause_id, run_id, label, clause_number, heading, found_at_ms) VALUES (?, ?, ?, ?, ?, ?)',
+    clauseId,
+    runId,
+    section?.label ?? null,
+    section?.number.slice(0, 32) ?? null,
+    section?.heading?.slice(0, 120) ?? null,
+    nowMs,
+  );
+}
+
+/** Clauses from extractions made before Covenant found sections, oldest contracts first. */
+export async function listClausesWithoutSection(limit: number): Promise<ClauseRow[]> {
+  const rows = await select(`${CLAUSE_SELECT} WHERE s.clause_id IS NULL ORDER BY c.contract_id LIMIT ${Math.max(1, Math.min(500, Math.floor(limit)))}`);
+  return rows.map(toClause);
 }
 
 export async function getClause(id: string): Promise<ClauseRow | null> {
-  const rows = await select(`SELECT ${CLAUSE_COLUMNS} FROM clause WHERE id = ?`, id);
+  const rows = await select(`${CLAUSE_SELECT} WHERE c.id = ?`, id);
   return rows[0] ? toClause(rows[0]) : null;
 }
 
 export async function listClauses(runId: string): Promise<ClauseRow[]> {
-  return (await select(`SELECT ${CLAUSE_COLUMNS} FROM clause WHERE run_id = ?`, runId)).map(toClause);
+  return (await select(`${CLAUSE_SELECT} WHERE c.run_id = ?`, runId)).map(toClause);
 }
 
 /** Clears what an earlier, interrupted attempt at this run left behind. */
 export async function deleteRunContent(runId: string): Promise<void> {
   await change('DELETE FROM obligation WHERE run_id = ?', runId);
+  await change('DELETE FROM clause_section WHERE run_id = ?', runId);
   await change('DELETE FROM clause WHERE run_id = ?', runId);
 }
 
@@ -674,7 +714,7 @@ export async function listObligationsForRuns(runIds: readonly string[]): Promise
 
 export async function listClausesForRuns(runIds: readonly string[]): Promise<ClauseRow[]> {
   return inChunks(runIds, async (chunk) =>
-    (await select(`SELECT ${CLAUSE_COLUMNS} FROM clause WHERE run_id IN (${marks(chunk.length)})`, ...chunk)).map(toClause),
+    (await select(`${CLAUSE_SELECT} WHERE c.run_id IN (${marks(chunk.length)})`, ...chunk)).map(toClause),
   );
 }
 

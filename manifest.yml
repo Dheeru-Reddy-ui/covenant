@@ -62,29 +62,192 @@ modules:
     - key: main
       engine: mysql
 
-  # S4: one harmless read-only tool, exposed through the Atlassian MCP server.
+  # The four tools. The Rovo agent and the MCP server expose the same ones.
+  # Descriptions are written for the model that reads them: when to use the
+  # tool, every input, the output shape and the limits. Each runs as the
+  # caller and sees only contracts on work items the caller can see.
   action:
-    - key: covenant-ping
-      name: Covenant ping
-      function: spikePing
+    - key: list_obligations
+      name: List contract obligations
+      function: listObligationsTool
       actionVerb: GET
-      description: >
-        Checks that the Covenant app is installed and reachable. Use it only
-        when asked to test the Covenant connection. Returns a small status
-        object and reads no contract data.
+      description: >-
+        For deadline questions, such as notice deadlines in the next 90 days.
+        Returns obligations the caller can see, by due date: contract, kind,
+        due, daysLeft, review, citation {quote, location}. Max 100 rows. Repeat
+        dates exactly; never recalculate.
       inputs:
-        note:
-          title: Note
+        withinDays:
+          title: Within days
+          type: integer
+          required: false
+          description: >-
+            Only obligations due from today to this many days ahead, 1 to 730.
+            Leave it out to list everything, including overdue and undated ones.
+        kind:
+          title: Kind
           type: string
           required: false
-          description: Optional short text. Only its length is echoed back.
+          description: >-
+            One or more kinds, comma separated: renewal_notice (notice to renew,
+            not renew or terminate), payment, price_change,
+            reporting_deliverable, audit_insurance, service_credit. Everyday
+            words such as notice, insurance or SLA also work.
+        contract:
+          title: Contract
+          type: string
+          required: false
+          description: >-
+            Part of a contract's work item title, work item key or file name,
+            such as a counterparty name. Case does not matter.
+        party:
+          title: Responsible party
+          type: string
+          required: false
+          description: Part of the name of the party the clause makes responsible, such as Customer or a supplier's name.
+        status:
+          title: Review status
+          type: string
+          required: false
+          description: >-
+            open (the default: everything not rejected), needs_review (not yet
+            approved by a person) or approved.
+        limit:
+          title: Limit
+          type: integer
+          required: false
+          description: Maximum rows to return, 1 to 100. The default is 25. If truncated is true, narrow the filters.
+        timeZone:
+          title: Time zone
+          type: string
+          required: false
+          description: >-
+            The user's IANA time zone, such as Europe/London or Asia/Kolkata, so
+            today and daysLeft follow their calendar. Pass it when you know it.
+            Defaults to UTC; the reply says which zone it used.
+
+    - key: get_clause
+      name: Get the clause behind an obligation
+      function: getClauseTool
+      actionVerb: GET
+      description: >-
+        Use when the user wants the exact wording behind an obligation or the
+        source of a date. Returns the verbatim clause with its location, page,
+        file and work item link, checked word for word against the file. Needs
+        obligationId from list_obligations.
+      inputs:
+        obligationId:
+          title: Obligation id
+          type: string
+          required: true
+          description: The obligationId of one obligation, as returned by list_obligations.
+
+    - key: get_renewal_brief
+      name: Get a renewal decision brief
+      function: getRenewalBriefTool
+      actionVerb: GET
+      description: >-
+        Use before a renewal decision. Returns one contract's terms,
+        auto-renewal, notice deadline {status, deadline, daysLeft}, governing
+        clauses verbatim, past decisions, dates that move on renewal, related
+        work and suggested owners. Context adds about 2 s.
+      inputs:
+        contract:
+          title: Contract work item
+          type: string
+          required: true
+          description: >-
+            Key of the Jira work item the contract is attached to, such as
+            LEGAL-12, or a link to it. list_obligations returns it as
+            contract.workItem.
+        contractId:
+          title: Contract id
+          type: string
+          required: false
+          description: Needed only when the work item holds more than one contract. The error then lists the ids.
+        includeContext:
+          title: Include context
+          type: boolean
+          required: false
+          description: Defaults to true. Set false to skip related work, goals, teams and owner suggestions.
+        timeZone:
+          title: Time zone
+          type: string
+          required: false
+          description: >-
+            The user's IANA time zone, such as Europe/London or Asia/Kolkata, so
+            today and daysLeft follow their calendar. Defaults to UTC; the reply
+            says which zone it used.
+
+    - key: record_decision
+      name: Record a renewal decision
+      function: recordDecisionTool
+      actionVerb: CREATE
+      description: >-
+        Records renew, renegotiate or terminate with the person's rationale.
+        Without confirm it writes nothing and returns a preview (ok false,
+        confirmation_required). Call again with confirm true only after the
+        person explicitly agrees.
+      inputs:
+        contract:
+          title: Contract work item
+          type: string
+          required: true
+          description: Key of the Jira work item the contract is attached to, such as LEGAL-12, or a link to it.
+        contractId:
+          title: Contract id
+          type: string
+          required: false
+          description: Needed only when the work item holds more than one contract.
+        outcome:
+          title: Outcome
+          type: string
+          required: true
+          description: renew, renegotiate or terminate. No other value is accepted.
+        rationale:
+          title: Rationale
+          type: string
+          required: true
+          description: Why, in the person's own words. 10 to 4000 characters. Never write it for them.
+        confirm:
+          title: Confirm
+          type: boolean
+          required: false
+          description: >-
+            Leave it out on the first call: nothing is written, and the reply is
+            ok false with refused "confirmation_required" and wouldRecord. Show
+            wouldRecord to the person. Set true only after they explicitly agree
+            to that exact outcome and rationale; never on your own judgment.
+
+  # One agent per need; the name must fit in 30 characters. The prompt lives in a resource file.
+  rovo:agent:
+    - key: covenant-agent
+      name: Covenant contract assistant
+      description: >-
+        Answers questions about contract deadlines and obligations tracked in
+        Jira, quoting the exact clause behind each date, and helps you record
+        renewal decisions.
+      prompt: resource:agent-prompt;prompt.txt
+      conversationStarters:
+        - Which notice deadlines fall in the next 90 days?
+        - What is overdue or still waiting for review?
+        - Brief me on the next contract up for renewal
+        - Help me record a renewal decision
+      actions:
+        - list_obligations
+        - get_clause
+        - get_renewal_brief
+        - record_decision
 
   # One per app, name at most 30 characters, tools are action keys.
   rovo:mcp:
     - key: covenant-mcp
       name: Covenant
       tools:
-        - covenant-ping
+        - list_obligations
+        - get_clause
+        - get_renewal_brief
+        - record_decision
 
   function:
     - key: resolver
@@ -98,8 +261,14 @@ modules:
     - key: sampleWorker
       handler: index.sampleWorker
       timeoutSeconds: 900
-    - key: spikePing
-      handler: index.spikePing
+    - key: listObligationsTool
+      handler: index.listObligationsTool
+    - key: getClauseTool
+      handler: index.getClauseTool
+    - key: getRenewalBriefTool
+      handler: index.getRenewalBriefTool
+    - key: recordDecisionTool
+      handler: index.recordDecisionTool
 
 resources:
   - key: main
@@ -108,6 +277,8 @@ resources:
     path: src/frontend/register.tsx
   - key: admin
     path: src/frontend/admin.tsx
+  - key: agent-prompt
+    path: resources/agent
 
 permissions:
   scopes:

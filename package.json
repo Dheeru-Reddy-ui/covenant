@@ -9,9 +9,10 @@
     "eval"
   ],
   "scripts": {
-    "test": "npm test --workspaces --if-present",
+    "test": "npm test --workspaces --if-present && npm run test:app",
+    "test:app": "vitest run --config vitest.config.mts",
     "test:watch": "npm run test:watch --workspace @covenant/core",
-    "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck --workspaces --if-present",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json && npm run typecheck --workspaces --if-present",
     "check": "npm run typecheck && npm test",
     "lint:forge": "forge lint",
     "spike:local": "tsx scripts/local-extract.ts",

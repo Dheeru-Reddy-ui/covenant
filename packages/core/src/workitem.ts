@@ -1,6 +1,7 @@
 import type { IsoDate } from './dates/civil';
 import { type Schedule, describeTiming } from './schedule';
 import type { ObligationKind, ObligationRule } from './schema';
+import { type ClauseSection, describeSection } from './sections';
 import { normaliseWhitespace } from './verify';
 
 /**
@@ -32,11 +33,18 @@ export interface AdfDoc extends AdfNode {
   content: AdfNode[];
 }
 
+/** Where code found a quote. `paginated` is false for Word files, which have no fixed pages. */
+export interface ClauseLocationInput {
+  page: number;
+  pageEnd: number;
+  paginated: boolean;
+  section?: ClauseSection | null;
+}
+
 export interface WorkItemInput {
   rule: ObligationRule;
   schedule: Schedule;
-  /** Where code found the quote. `paginated` is false for Word files, which have no fixed pages. */
-  location: { page: number; pageEnd: number; paginated: boolean };
+  location: ClauseLocationInput;
   source: { fileName: string; parentKey: string };
 }
 
@@ -83,10 +91,15 @@ function dueLine(schedule: Schedule): AdfNode {
   }
 }
 
+/** "clause 1.2 (Term and renewal), page 4", or just the page, or that a Word file has no page numbers. */
+function whereText(loc: ClauseLocationInput): string {
+  const pages = loc.page === loc.pageEnd ? `page ${loc.page}` : `pages ${loc.page} to ${loc.pageEnd}`;
+  if (loc.section) return `${describeSection(loc.section)}, ${loc.paginated ? pages : 'Word file'}`;
+  return loc.paginated ? pages : 'Word file, no page numbers';
+}
+
 function clauseLine(input: WorkItemInput): AdfNode {
-  const { page, pageEnd, paginated } = input.location;
-  const where = !paginated ? 'Word file, no page numbers' : page === pageEnd ? `page ${page}` : `pages ${page} to ${pageEnd}`;
-  return paragraph(text('Clause', true), ` (${where}) in ${input.source.fileName}, attached to ${input.source.parentKey}:`);
+  return paragraph(text('Clause', true), ` (${whereText(input.location)}) in ${input.source.fileName}, attached to ${input.source.parentKey}:`);
 }
 
 export function draftWorkItem(input: WorkItemInput): WorkItemDraft {
@@ -123,7 +136,7 @@ export interface DecisionItemInput {
   termEnd: IsoDate | null;
   /** The notice rule in plain English, for example "90 days before the end of the current term". */
   timing: string;
-  clause: { quote: string; page: number; pageEnd: number; paginated: boolean } | null;
+  clause: ({ quote: string } & ClauseLocationInput) | null;
 }
 
 /** The "Decision due" work item the daily check opens when a notice deadline comes inside the lead time. */
@@ -136,8 +149,7 @@ export function draftDecisionItem(input: DecisionItemInput): WorkItemDraft {
   if (input.termEnd !== null) content.push(labelled('Current term ends', input.termEnd));
   if (input.clause !== null) {
     const c = input.clause;
-    const where = !c.paginated ? 'Word file, no page numbers' : c.page === c.pageEnd ? `page ${c.page}` : `pages ${c.page} to ${c.pageEnd}`;
-    content.push(paragraph(text('Clause', true), ` (${where}) in ${input.fileName}:`));
+    content.push(paragraph(text('Clause', true), ` (${whereText(c)}) in ${input.fileName}:`));
     content.push({ type: 'blockquote', content: [paragraph(normaliseWhitespace(c.quote))] });
   }
   content.push(

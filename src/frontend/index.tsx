@@ -59,8 +59,19 @@ const FACT_LABEL: Record<FactView['status'], [string, LozengeAppearance]> = {
 
 const kb = (bytes: number): string => (bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
 const seconds = (ms: number): string => `${Math.max(0, Math.round(ms / 1000))} s`;
-const where = (c: { page: number; pageEnd: number; paginated: boolean }): string =>
-  !c.paginated ? 'Word file' : c.page === c.pageEnd ? `page ${c.page}` : `pages ${c.page} to ${c.pageEnd}`;
+/** The viewer's time zone, so "days left" follows their calendar. Undefined lets the server use UTC. */
+const browserTimeZone = (): string | undefined => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const where = (c: { page: number; pageEnd: number; paginated: boolean; section?: string | null }): string => {
+  const place = !c.paginated ? 'Word file' : c.page === c.pageEnd ? `page ${c.page}` : `pages ${c.page} to ${c.pageEnd}`;
+  return c.section ? `${c.section}, ${place}` : place;
+};
 
 async function call<T>(key: string, payload?: Record<string, unknown>): Promise<Reply<T>> {
   try {
@@ -310,7 +321,7 @@ const App = () => {
   const [editingTerms, setEditingTerms] = useState<RunView | null>(null);
 
   const load = useCallback(async () => {
-    const reply = await call<PanelView>('panel.load');
+    const reply = await call<PanelView>('panel.load', { timeZone: browserTimeZone() });
     if (reply.ok) {
       setView(reply.data);
       setLoadError(null);

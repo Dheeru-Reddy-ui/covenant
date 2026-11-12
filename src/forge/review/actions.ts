@@ -74,7 +74,7 @@ export async function approveObligation(issueId: string, obligationId: string, a
     const draft = draftWorkItem({
       rule: obligation.rule,
       schedule,
-      location: { page: clause.page, pageEnd: clause.pageEnd, paginated: run.paginated },
+      location: { page: clause.page, pageEnd: clause.pageEnd, paginated: run.paginated, section: clause.section },
       source: { fileName: contract.fileName, parentKey: contract.issueKey },
     });
 

@@ -5,7 +5,9 @@ import {
   type NoticeWindow,
   canApprove,
   currentTermIndex,
+  describeSection,
   describeTiming,
+  normaliseWhitespace,
   noticeWindow,
   rolloverCheck,
   rolloverPreview,
@@ -53,7 +55,16 @@ export function windowFor(
 }
 
 const clauseView = (clause: repo.ClauseRow | undefined, paginated: boolean): ClauseView | null =>
-  clause === undefined ? null : { quote: clause.quote, page: clause.page, pageEnd: clause.pageEnd, paginated, ambiguous: clause.ambiguous };
+  clause === undefined
+    ? null
+    : {
+        quote: clause.quote,
+        page: clause.page,
+        pageEnd: clause.pageEnd,
+        paginated,
+        ambiguous: clause.ambiguous,
+        section: clause.section ? describeSection(clause.section) : null,
+      };
 
 export interface BriefInput {
   contract: repo.ContractRow;
@@ -128,7 +139,16 @@ export function buildBrief(input: BriefInput): BriefView {
   if (renewalClause) governing.push({ label: 'Renewal', clause: renewalClause });
   for (const o of live.filter((x) => x.rule.kind === 'renewal_notice')) {
     const c = clauseView(clauses.get(o.clauseId), run.paginated);
-    if (c && !governing.some((g) => g.clause.quote === c.quote)) governing.push({ label: 'Notice', clause: c });
+    if (c === null) continue;
+    // The notice words are often part of the renewal sentence already quoted. Quote each passage once, the longer one.
+    const overlapping = governing.find((g) => normaliseWhitespace(g.clause.quote).includes(normaliseWhitespace(c.quote)));
+    if (overlapping) {
+      if (overlapping.label === 'Renewal') overlapping.label = 'Renewal and notice';
+      continue;
+    }
+    const contained = governing.findIndex((g) => normaliseWhitespace(c.quote).includes(normaliseWhitespace(g.clause.quote)));
+    if (contained !== -1) governing[contained] = { label: 'Renewal and notice', clause: c };
+    else governing.push({ label: 'Notice', clause: c });
   }
 
   const labelOf = (o: repo.ObligationRow) => `${KIND_LABELS[o.rule.kind]}: ${o.rule.summary.replace(/[.\s]+$/, '')}`;
