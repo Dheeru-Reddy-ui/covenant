@@ -2,6 +2,7 @@ import Resolver from '@forge/resolver';
 import { CORE_VERSION, SCHEMA_VERSION, resolveRule } from '../../../packages/core/src';
 import { runAttachmentSpike } from './s1-attachment';
 import { runLlmSpike } from './s2-llm';
+import { runExtractorSpike } from './s2b-extractor';
 import { runGraphSpike } from './s3-graph';
 import { runSqlSpike } from './s5-sql';
 
@@ -86,6 +87,9 @@ resolver.define('spike.s1', ({ context }) =>
 );
 
 resolver.define('spike.s2', () => attempt('s2', () => runLlmSpike()));
+
+// S2b: the Phase 1 extractor and the production LLM adapter, including one forced repair turn.
+resolver.define('spike.s2b', () => attempt('s2b', () => runExtractorSpike()));
 
 resolver.define('spike.s3', ({ context }) =>
   attempt('s3', async () => {

@@ -5,16 +5,18 @@
   "description": "Covenant: contract obligations as dated, owned, clause-cited Jira work items (Codegeist 2026).",
   "license": "MIT",
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "eval"
   ],
   "scripts": {
-    "test": "npm test --workspace @covenant/core",
+    "test": "npm test --workspaces --if-present",
     "test:watch": "npm run test:watch --workspace @covenant/core",
-    "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck --workspace @covenant/core",
+    "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck --workspaces --if-present",
     "check": "npm run typecheck && npm test",
     "lint:forge": "forge lint",
     "spike:local": "tsx scripts/local-extract.ts",
-    "samples": "tsx scripts/make-samples.ts"
+    "samples": "tsx scripts/make-samples.ts",
+    "eval": "npm run eval --workspace @covenant/eval --"
   },
   "dependencies": {
     "@forge/api": "^8.5.0",

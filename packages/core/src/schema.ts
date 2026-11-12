@@ -63,6 +63,24 @@ export const RecurrenceSchema = z.strictObject({
 
 const RECURRING_ANCHORS: ReadonlySet<string> = new Set(['period_start', 'period_end', 'anniversary']);
 
+/** The evidence for anything the model reports. Code checks it against the contract before keeping it. */
+export const QuoteSchema = z
+  .string()
+  .min(1)
+  .max(4000)
+  .describe('The sentence or clause this comes from, copied character for character from the text. Do not paraphrase, shorten words or fix typos.');
+
+/** Only a hint: code derives the page from where the quote is found. */
+export const PageHintSchema = z
+  .int()
+  .min(1)
+  .nullable()
+  .describe('The page the quote appears on, if the text shows page numbers. Otherwise null. Used only as a hint.');
+
+export const ConfidenceSchema = z
+  .enum(['high', 'medium', 'low'])
+  .describe('high when the text states every part of this; medium when one part is implied; low when the wording is unclear or conflicts with another clause.');
+
 /**
  * One obligation as the model reports it: what must happen, who must do it,
  * and when, expressed as a rule. The model reads; code decides the date.
@@ -101,15 +119,9 @@ export const ObligationRuleSchema = z
         'even when the contract renews: the date engine rolls the term forward itself. ' +
         'basis is "calendar" for calendar months, quarters and years, "contract" for periods counted from the effective date, "fiscal" for a fiscal year.',
     ),
-    quote: z
-      .string()
-      .min(1)
-      .max(4000)
-      .describe('The sentence or clause this rule comes from, copied character for character from the text. Do not paraphrase, shorten words or fix typos.'),
-    page: z.int().min(1).nullable().describe('The page the quote appears on, if the text shows page numbers. Otherwise null. Used only as a hint.'),
-    confidence: z
-      .enum(['high', 'medium', 'low'])
-      .describe('high when the text states every part of the rule; medium when one part is implied; low when the wording is unclear or conflicts with another clause.'),
+    quote: QuoteSchema,
+    page: PageHintSchema,
+    confidence: ConfidenceSchema,
   })
   .superRefine((rule, ctx) => {
     const recurring = RECURRING_ANCHORS.has(rule.anchor);

@@ -19,6 +19,11 @@ const SPIKES: Array<{ key: string; title: string; passes: string }> = [
     passes: 'For each file, bytesSha256 and textSha256 equal what "npm run spike:local" prints for the same file on disk.',
   },
   { key: 'spike.s2', title: 'S2 Forge LLM with a tool schema', passes: 'schemaValid and quoteVerified are true, and resolvedDate is 2026-11-30.' },
+  {
+    key: 'spike.s2b',
+    title: 'S2b Phase 1 extractor through Forge LLM',
+    passes: 'status is ok, effectiveDate is 2025-03-01, noticeDate is 2026-11-30, grounding is all verified, and repairCall has toolCalled and validJson true.',
+  },
   { key: 'spike.s3', title: 'S3 Teamwork Graph as you', passes: 'No error, and rows equals the number of work items assigned to you.' },
   { key: 'spike.s5', title: 'S5 Forge SQL', passes: 'roundTrip is true.' },
 ];

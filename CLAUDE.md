@@ -9,7 +9,7 @@ A user attaches a contract (text PDF or DOCX) to a Jira work item and clicks Ext
 
 ## Trust rules (these hold everywhere)
 
-- The model only reads text and returns structured rules: kind, responsible party, anchor event, offset (number, unit, direction), recurrence, quote, page hint. It never returns a calendar date.
+- The model only reads text and returns structured rules: kind, responsible party, anchor event, offset (number, unit, direction), recurrence, quote, page hint. It never returns a calendar date it worked out. A date the contract writes out (an effective date, a stated end date) may be copied as text from inside its verified quote; code parses it (`packages/core/src/dates/written.ts`) and sends blanks, two-digit years and ambiguous numeric dates to review.
 - Deterministic code in `packages/core/src/dates` resolves rules into dates. It has unit and property-based tests.
 - Every obligation's quote must appear verbatim in the source text after whitespace normalisation (`packages/core/src/verify.ts`). No match, no obligation.
 - The page shown to users is derived by code from where the quote was found. The model's page is only a hint for choosing between repeats.
@@ -19,11 +19,12 @@ A user attaches a contract (text PDF or DOCX) to a Jira work item and clicks Ext
 
 ## Layout
 
-- `packages/core`: pure TypeScript, no Forge, Node or browser imports, never reads the clock or logs (enforced by `test/purity.test.ts`). Schema, verifier, date engine; later the extractor and critic.
+- `packages/core`: pure TypeScript, no Forge, Node or browser imports, never reads the clock or logs (enforced by `test/purity.test.ts`). Schema, verifier, date engine, extractor (`extract.ts`, one prompt and the `record_contract` tool) and critic (`critic.ts`). Model calls go only through the `LlmClient` interface (`llm.ts`), which also holds `PRODUCTION_MODEL`. Bump `EXTRACTOR_VERSION` when the prompt, tool or checks change.
 - `src/parse`: attachment bytes to page text (PDF via `unpdf/pdfjs`, DOCX via mammoth). No Forge imports.
 - `src/forge`: resolvers, queue consumer, scheduled trigger, the four actions, SQL repositories, Teamwork Graph client. `src/forge/spikes` is Phase 0 throwaway code.
 - `src/frontend`: UI Kit screens.
-- `eval/`: scores `packages/core` against CUAD. CUAD files never go in git or in the app.
+- `src/forge/llm`: the production `LlmClient` over Forge LLMs. It must call the model exactly as `eval/src/anthropic-client.ts` does: same model id, temperature 0, one forced tool, same repair wording.
+- `eval/`: a workspace that scores `packages/core` against 30 CUAD contracts and writes `eval/report.md`. CUAD files live in `eval/data/`, which git ignores. They never go in git or in the app. Tune prompts on the dev split only (`--dev`).
 - `samples/fictional`: an invented contract for tests and demos.
 - `docs/spikes.md`: Phase 0 results.
 
@@ -31,11 +32,12 @@ A user attaches a contract (text PDF or DOCX) to a Jira work item and clicks Ext
 
 - UI functions time out at 25 s; actions and rovo:agentConnector at 55 s; queue consumers and scheduled triggers default to 55 s and allow `timeoutSeconds` up to 900. Extraction runs in a queue consumer; the Rovo/MCP Extract tool must enqueue, not run inline.
 - One `llm` module and one `rovo:mcp` module per app. Both, and `sql`, are declared from the first deploy because adding `llm` or `sql` later forces a major version.
-- Forge LLMs: `@forge/llm` `chat()`; no JSON mode, so structure is forced with one tool plus `tool_choice`. Tool arguments arrive as a JSON string even though the SDK types say object (spike S2). The only Haiku is `claude-haiku-4-5-20251001`, past its earliest retirement date; keep the model id in config with `claude-sonnet-4-6` as fallback, and record the model on each run. The eval must use the same model id as production. LLM tokens have no free allowance and are billed to the developer.
+- Forge LLMs: `@forge/llm` `chat()`; no JSON mode, so structure is forced with one tool plus `tool_choice`. Tool arguments are JSON strings in both directions even though the SDK types say object (spikes S2, S2b); a replayed assistant tool call also needs `content: []`, because `''` becomes an empty text block that the API rejects. The only Haiku is `claude-haiku-4-5-20251001`, past its earliest retirement date; keep the model id in config with `claude-sonnet-4-6` as fallback, and record the model on each run. The eval must use the same model id as production. LLM tokens have no free allowance and are billed to the developer.
 - Forge SQL: no foreign keys, one statement per query, `?` parameters, SELECT 5 s, request 1 MiB, response 4 MiB.
 - `@forge/events` 2.x+: events wrapped in `body`; 50 events or 200 KB per push, so pass ids, not text.
 - Teamwork Graph (Preview): `api.asUser().requestTeamworkGraph(query, variables, operationName)` only. Operation names are `covenant_<name>` (name 4+ chars). HTTP 200 can carry errors; missing scopes silently drop rows; page until `hasNextPage` is false; never call it from a scheduled or queued function.
 - rovo:mcp (Preview): tools are action keys; external access is off until a site or org admin enables it; endpoint `https://mcp.atlassian.com/forge/<appId>`. Spike S4: tools are listed as `<key>_development` outside production, so never hard-code tool names; the caller is `context.principal.accountId` (not in `payload.context`); `api.asUser()` works inside the action and runs as the caller.
+- Anthropic API (eval only): `@anthropic-ai/sdk` 1.x sends API version 2026-10-21, which rejects `temperature`. Production runs Haiku 4.5 at temperature 0, so the eval pins SDK 0.137.0, the last release on 2023-06-01. `claude-haiku-4-5-20251001` is Active on the API at $1/$5 per million tokens (checked 12 Nov 2026).
 - unpdf's main entry cannot be bundled by Forge (it calls `import.meta.resolve('pdfjs-dist/...')`); import `getDocument` from `unpdf/pdfjs` instead.
 
 ## Environment
@@ -55,8 +57,11 @@ A user attaches a contract (text PDF or DOCX) to a Jira work item and clicks Ext
 ## Commands
 
 ```
-npm run check                      # type-check everything and run core tests
-npm test                           # core tests only
+npm run check                      # type-check everything and run core and eval tests
+npm test                           # core and eval tests
+npm run eval                       # score 30 CUAD contracts with the production model; needs ANTHROPIC_API_KEY and eval/data/cuad
+npm run eval -- --dev              # 10 separate contracts for prompt work
+npm run eval -- --rescore <file>   # rebuild the report from a saved run, no model calls
 npm run samples                    # rebuild the fictional sample PDF and DOCX and verify their clauses
 npm run spike:local -- <file>      # local fingerprint of a PDF or DOCX, to compare with spike S1
 forge deploy -e development
