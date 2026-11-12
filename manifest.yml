@@ -18,11 +18,38 @@ modules:
       title: Covenant
       icon: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
 
+  # The portfolio register: every obligation by due date. One global page per app.
+  jira:globalPage:
+    - key: covenant-register
+      resource: register
+      resolver:
+        function: resolver
+      render: native
+      title: Covenant register
+
+  # Preflight, the decision lead time, the daily check and the sample workspace. Its resolvers check for Jira admin themselves.
+  jira:adminPage:
+    - key: covenant-admin
+      resource: admin
+      resolver:
+        function: resolver
+      render: native
+      title: Covenant
+
+  # Recomputes notice windows and opens "Decision due" items. Runs as the app, so it never calls Teamwork Graph.
+  scheduledTrigger:
+    - key: covenant-daily
+      function: dailyJob
+      interval: day
+
   # Extraction runs here, not in the 25 s resolver: the Extract button only queues it.
   consumer:
     - key: extraction-consumer
       queue: covenant-extraction
       function: extractionWorker
+    - key: sample-consumer
+      queue: covenant-sample
+      function: sampleWorker
 
   # One per app. Only the claude family exists today.
   llm:
@@ -65,12 +92,22 @@ modules:
     - key: extractionWorker
       handler: index.extractionWorker
       timeoutSeconds: 900
+    - key: dailyJob
+      handler: index.dailyJob
+      timeoutSeconds: 300
+    - key: sampleWorker
+      handler: index.sampleWorker
+      timeoutSeconds: 900
     - key: spikePing
       handler: index.spikePing
 
 resources:
   - key: main
     path: src/frontend/index.tsx
+  - key: register
+    path: src/frontend/register.tsx
+  - key: admin
+    path: src/frontend/admin.tsx
 
 permissions:
   scopes:
@@ -83,3 +120,8 @@ permissions:
     - read:graph:issue:jira
     - read:graph:issue-status:jira
     - read:graph:user:atlassian
+    # Decision brief context: goals on the contract's work item, teams on its space, comments on linked work.
+    - read:graph:goal:atlassian
+    - read:graph:team:atlassian
+    - read:graph:issue-comment:jira
+    - read:graph:project:jira

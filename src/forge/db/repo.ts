@@ -627,3 +627,248 @@ export async function saveSchedule(id: string, dueDate: IsoDate | null, schedule
     id,
   );
 }
+
+/** Approved obligations follow their work item: this records the due date after the item itself was moved. */
+export async function saveApprovedDueDate(id: string, dueDate: IsoDate | null, scheduleStatus: ScheduleStatus, nowMs: number): Promise<void> {
+  await change(
+    "UPDATE obligation SET due_date = ?, schedule_status = ?, updated_at_ms = ? WHERE id = ? AND decision = 'approved'",
+    dueDate,
+    scheduleStatus,
+    nowMs,
+    id,
+  );
+}
+
+// ---- portfolio ----
+
+const PORTFOLIO_LIMIT = 500;
+
+export async function listAllContracts(): Promise<ContractRow[]> {
+  return (await select(`SELECT ${CONTRACT_COLUMNS} FROM contract ORDER BY created_at_ms DESC LIMIT ${PORTFOLIO_LIMIT}`)).map(toContract);
+}
+
+/** The newest finished run of every contract that has one. */
+export async function listLatestReviewableRuns(): Promise<RunRow[]> {
+  const rows = (await select(`SELECT ${RUN_COLUMNS} FROM extraction_run WHERE status IN ('needs_review', 'approved')`)).map(toRun);
+  const latest = new Map<string, RunRow>();
+  for (const run of rows) {
+    const seen = latest.get(run.contractId);
+    if (seen === undefined || run.extractorVersion > seen.extractorVersion) latest.set(run.contractId, run);
+  }
+  return [...latest.values()];
+}
+
+async function inChunks<T>(ids: readonly string[], load: (chunk: string[]) => Promise<T[]>): Promise<T[]> {
+  const out: T[] = [];
+  for (let i = 0; i < ids.length; i += 100) out.push(...(await load(ids.slice(i, i + 100))));
+  return out;
+}
+
+const marks = (n: number): string => new Array(n).fill('?').join(', ');
+
+export async function listObligationsForRuns(runIds: readonly string[]): Promise<ObligationRow[]> {
+  return inChunks(runIds, async (chunk) =>
+    (await select(`SELECT ${OBLIGATION_COLUMNS} FROM obligation WHERE run_id IN (${marks(chunk.length)}) ORDER BY ordinal`, ...chunk)).map(toObligation),
+  );
+}
+
+export async function listClausesForRuns(runIds: readonly string[]): Promise<ClauseRow[]> {
+  return inChunks(runIds, async (chunk) =>
+    (await select(`SELECT ${CLAUSE_COLUMNS} FROM clause WHERE run_id IN (${marks(chunk.length)})`, ...chunk)).map(toClause),
+  );
+}
+
+/** Marks a contract renewed, or undoes it. Moves only from the term the reviewer saw, so two clicks cannot skip a term. */
+export async function setTermIndex(contractId: string, from: number, to: number): Promise<boolean> {
+  return (await change('UPDATE contract SET term_index = ? WHERE id = ? AND term_index = ?', to, contractId, from)) === 1;
+}
+
+// ---- contract_state ----
+
+export interface ContractState {
+  contractId: string;
+  noticeDeadline: IsoDate | null;
+  noticeStatus: string | null;
+  windowCheckedAtMs: number | null;
+  decisionItemKey: string | null;
+  decisionItemTerm: number | null;
+  decisionItemClaimedAtMs: number | null;
+  renewedBy: string | null;
+  renewedAtMs: number | null;
+}
+
+const STATE_COLUMNS =
+  'contract_id, notice_deadline, notice_status, window_checked_at_ms, decision_item_key, decision_item_term, decision_item_claimed_at_ms, renewed_by, renewed_at_ms';
+
+const toState = (r: Raw): ContractState => ({
+  contractId: String(r.contract_id),
+  noticeDeadline: dateOrNull(r.notice_deadline),
+  noticeStatus: strOrNull(r.notice_status),
+  windowCheckedAtMs: numOrNull(r.window_checked_at_ms),
+  decisionItemKey: strOrNull(r.decision_item_key),
+  decisionItemTerm: numOrNull(r.decision_item_term),
+  decisionItemClaimedAtMs: numOrNull(r.decision_item_claimed_at_ms),
+  renewedBy: strOrNull(r.renewed_by),
+  renewedAtMs: numOrNull(r.renewed_at_ms),
+});
+
+export const emptyContractState = (contractId: string): ContractState => ({
+  contractId,
+  noticeDeadline: null,
+  noticeStatus: null,
+  windowCheckedAtMs: null,
+  decisionItemKey: null,
+  decisionItemTerm: null,
+  decisionItemClaimedAtMs: null,
+  renewedBy: null,
+  renewedAtMs: null,
+});
+
+async function ensureState(contractId: string): Promise<void> {
+  await change('INSERT IGNORE INTO contract_state (contract_id) VALUES (?)', contractId);
+}
+
+export async function getContractState(contractId: string): Promise<ContractState> {
+  const rows = await select(`SELECT ${STATE_COLUMNS} FROM contract_state WHERE contract_id = ?`, contractId);
+  return rows[0] ? toState(rows[0]) : emptyContractState(contractId);
+}
+
+export async function listContractStates(contractIds: readonly string[]): Promise<Map<string, ContractState>> {
+  const rows = await inChunks(contractIds, async (chunk) =>
+    (await select(`SELECT ${STATE_COLUMNS} FROM contract_state WHERE contract_id IN (${marks(chunk.length)})`, ...chunk)).map(toState),
+  );
+  return new Map(rows.map((s) => [s.contractId, s]));
+}
+
+export async function saveWindow(contractId: string, deadline: IsoDate | null, status: string, nowMs: number): Promise<void> {
+  await ensureState(contractId);
+  await change(
+    'UPDATE contract_state SET notice_deadline = ?, notice_status = ?, window_checked_at_ms = ? WHERE contract_id = ?',
+    deadline,
+    status,
+    nowMs,
+    contractId,
+  );
+}
+
+/**
+ * Claims the right to open the "Decision due" item for a term, so the daily
+ * trigger and a manual run cannot both open one. A claim that never got its
+ * key (the call died) can be taken again once it is older than `staleBeforeMs`.
+ */
+export async function claimDecisionItem(contractId: string, termIndex: number, nowMs: number, staleBeforeMs: number): Promise<boolean> {
+  await ensureState(contractId);
+  const won = await change(
+    'UPDATE contract_state SET decision_item_term = ?, decision_item_key = NULL, decision_item_claimed_at_ms = ? WHERE contract_id = ? ' +
+      'AND (decision_item_term IS NULL OR decision_item_term < ? OR (decision_item_term = ? AND decision_item_key IS NULL AND decision_item_claimed_at_ms < ?))',
+    termIndex,
+    nowMs,
+    contractId,
+    termIndex,
+    termIndex,
+    staleBeforeMs,
+  );
+  return won === 1;
+}
+
+export async function setDecisionItemKey(contractId: string, termIndex: number, key: string): Promise<void> {
+  await change('UPDATE contract_state SET decision_item_key = ? WHERE contract_id = ? AND decision_item_term = ?', key, contractId, termIndex);
+}
+
+export async function releaseDecisionItem(contractId: string, termIndex: number): Promise<void> {
+  await change(
+    'UPDATE contract_state SET decision_item_term = NULL, decision_item_claimed_at_ms = NULL ' +
+      'WHERE contract_id = ? AND decision_item_term = ? AND decision_item_key IS NULL',
+    contractId,
+    termIndex,
+  );
+}
+
+export async function recordRenewal(contractId: string, by: string | null, nowMs: number | null): Promise<void> {
+  await ensureState(contractId);
+  await change('UPDATE contract_state SET renewed_by = ?, renewed_at_ms = ? WHERE contract_id = ?', by, nowMs, contractId);
+}
+
+// ---- decision ----
+
+export interface DecisionRow {
+  id: string;
+  contractId: string;
+  runId: string | null;
+  outcome: string;
+  rationale: string | null;
+  brief: unknown;
+  termIndex: number;
+  workItemKey: string | null;
+  decidedBy: string;
+  decidedAtMs: number;
+}
+
+const DECISION_COLUMNS = 'id, contract_id, run_id, outcome, rationale, brief_json, term_index, work_item_key, decided_by, decided_at_ms';
+
+const toDecision = (r: Raw): DecisionRow => ({
+  id: String(r.id),
+  contractId: String(r.contract_id),
+  runId: strOrNull(r.run_id),
+  outcome: String(r.outcome),
+  rationale: strOrNull(r.rationale),
+  brief: json<unknown>(r.brief_json),
+  termIndex: num(r.term_index),
+  workItemKey: strOrNull(r.work_item_key),
+  decidedBy: String(r.decided_by),
+  decidedAtMs: num(r.decided_at_ms),
+});
+
+export async function insertDecision(d: DecisionRow): Promise<void> {
+  await change(
+    `INSERT INTO decision (${DECISION_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    d.id,
+    d.contractId,
+    d.runId,
+    d.outcome,
+    d.rationale,
+    JSON.stringify(d.brief),
+    d.termIndex,
+    d.workItemKey,
+    d.decidedBy,
+    d.decidedAtMs,
+  );
+}
+
+export async function listDecisionsForContract(contractId: string): Promise<DecisionRow[]> {
+  return (await select(`SELECT ${DECISION_COLUMNS} FROM decision WHERE contract_id = ? ORDER BY decided_at_ms DESC LIMIT 20`, contractId)).map(
+    toDecision,
+  );
+}
+
+// ---- app_setting ----
+
+export async function getSetting(name: string): Promise<string | null> {
+  const rows = await select('SELECT value FROM app_setting WHERE name = ?', name);
+  return rows[0] ? String(rows[0].value) : null;
+}
+
+export async function putSetting(name: string, value: string, by: string | null, nowMs: number): Promise<void> {
+  await change('INSERT IGNORE INTO app_setting (name, value, updated_by, updated_at_ms) VALUES (?, ?, ?, ?)', name, value, by, nowMs);
+  await change('UPDATE app_setting SET value = ?, updated_by = ?, updated_at_ms = ? WHERE name = ?', value, by, nowMs, name);
+}
+
+// ---- context_cache ----
+
+export async function getCachedContext(contractId: string, accountId: string): Promise<{ fetchedAtMs: number; payload: unknown } | null> {
+  const rows = await select('SELECT fetched_at_ms, payload FROM context_cache WHERE contract_id = ? AND account_id = ?', contractId, accountId);
+  const row = rows[0];
+  return row ? { fetchedAtMs: num(row.fetched_at_ms), payload: json<unknown>(row.payload) } : null;
+}
+
+export async function putCachedContext(contractId: string, accountId: string, payload: unknown, nowMs: number): Promise<void> {
+  const text = JSON.stringify(payload);
+  await change(
+    'INSERT IGNORE INTO context_cache (contract_id, account_id, fetched_at_ms, payload) VALUES (?, ?, ?, ?)',
+    contractId,
+    accountId,
+    nowMs,
+    text,
+  );
+  await change('UPDATE context_cache SET fetched_at_ms = ?, payload = ? WHERE contract_id = ? AND account_id = ?', nowMs, text, contractId, accountId);
+}

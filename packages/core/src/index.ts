@@ -22,6 +22,9 @@ export * from './extract';
 export * from './schedule';
 export * from './review';
 export * from './workitem';
+export * from './decision';
+export * from './register';
+export * from './owners';
 export {
   AnchorEventSchema,
   ClauseSchema,

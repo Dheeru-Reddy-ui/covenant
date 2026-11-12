@@ -115,6 +115,42 @@ export function draftWorkItem(input: WorkItemInput): WorkItemDraft {
   };
 }
 
+export interface DecisionItemInput {
+  fileName: string;
+  parentKey: string;
+  deadline: IsoDate;
+  daysLeft: number;
+  termEnd: IsoDate | null;
+  /** The notice rule in plain English, for example "90 days before the end of the current term". */
+  timing: string;
+  clause: { quote: string; page: number; pageEnd: number; paginated: boolean } | null;
+}
+
+/** The "Decision due" work item the daily check opens when a notice deadline comes inside the lead time. */
+export function draftDecisionItem(input: DecisionItemInput): WorkItemDraft {
+  const days = `${input.daysLeft} day${input.daysLeft === 1 ? '' : 's'}`;
+  const content: AdfNode[] = [
+    labelled('Notice deadline', `${input.deadline}, ${days} after this item was opened`),
+    labelled('Rule', input.timing),
+  ];
+  if (input.termEnd !== null) content.push(labelled('Current term ends', input.termEnd));
+  if (input.clause !== null) {
+    const c = input.clause;
+    const where = !c.paginated ? 'Word file, no page numbers' : c.page === c.pageEnd ? `page ${c.page}` : `pages ${c.page} to ${c.pageEnd}`;
+    content.push(paragraph(text('Clause', true), ` (${where}) in ${input.fileName}:`));
+    content.push({ type: 'blockquote', content: [paragraph(normaliseWhitespace(c.quote))] });
+  }
+  content.push(
+    paragraph(`Decide whether to renew, renegotiate or terminate, then record the decision in the Covenant panel on ${input.parentKey}.`),
+    paragraph("Opened by Covenant's daily check. The model read the clause; code worked out the date."),
+  );
+  return {
+    summary: oneLine(`Decision due: renew, renegotiate or terminate ${input.fileName} by ${input.deadline}`, MAX_SUMMARY),
+    description: { type: 'doc', version: 1, content },
+    dueDate: input.deadline,
+  };
+}
+
 /** All the text in a document, paragraphs separated by newlines. For tests and previews. */
 export function adfText(node: AdfNode): string {
   if (node.type === 'text') return node.text ?? '';

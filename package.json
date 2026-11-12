@@ -16,7 +16,8 @@
     "lint:forge": "forge lint",
     "spike:local": "tsx scripts/local-extract.ts",
     "samples": "tsx scripts/make-samples.ts",
-    "eval": "npm run eval --workspace @covenant/eval --"
+    "eval": "npm run eval --workspace @covenant/eval --",
+    "samples:workspace": "tsx scripts/check-workspace.ts"
   },
   "dependencies": {
     "@forge/api": "^8.5.0",
@@ -26,6 +27,7 @@
     "@forge/react": "^12.5.0",
     "@forge/resolver": "^2.0.2",
     "@forge/sql": "^4.0.10",
+    "docx": "^9.15.3",
     "mammoth": "^1.13.0",
     "react": "^18.2.0",
     "unpdf": "^2.1.0",
@@ -34,7 +36,6 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/react": "^18.2.64",
-    "docx": "^9.15.3",
     "pdf-lib": "^1.17.1",
     "tsx": "^4.23.15",
     "typescript": "~5.9.0"

@@ -5,7 +5,6 @@ import {
   type ReviewNote,
   type ReviewReason,
   type Schedule,
-  type UnresolvedReason,
   canApprove,
   currentTermIndex,
   describeTiming,
@@ -25,8 +24,11 @@ import type {
 import { scheduleFor, todayUtc } from '../dates';
 import * as repo from '../db/repo';
 import { ensureSchema } from '../db/schema';
+import { buildBrief } from '../decisions/brief';
 import { asUser, getIssue } from '../jira';
 import { STALE_RUN_MS } from '../pipeline/start';
+import { getLeadDays } from '../settings';
+import { undatedText } from '../text';
 
 /** Builds everything the issue panel shows. Dates are worked out fresh on every load, because today moves. */
 
@@ -40,22 +42,13 @@ const REVIEW_TEXT: Record<ReviewReason, string> = {
   needs_event_date: 'The effective date is an event, such as the last signature. Enter the date.',
 };
 
-const UNDATED_TEXT: Partial<Record<UnresolvedReason, string>> = {
-  needs_event_date: 'It runs from an event. Enter the event date with Edit to get a due date.',
-  needs_fiscal_year: 'It follows a fiscal year the contract does not define.',
-  missing_effective_date: 'The effective date is not confirmed. Set it under Contract terms.',
-  missing_initial_term: 'The length of the initial term is not confirmed. Set it under Contract terms.',
-  conflicting_term_facts: "The contract's term facts contradict each other. Fix them under Contract terms.",
-  unsupported_term_unit: 'The term is measured in business days, which Covenant does not roll forward.',
-};
-
 const reviewLines = (notes: ReviewNote[]): string[] => [...new Set(notes.map((n) => REVIEW_TEXT[n.reason] ?? n.reason))];
 
 const counted = (d: Duration | null): string => (d === null ? '' : `${d.count} ${d.unit.replace('_', ' ')}${d.count === 1 ? '' : 's'}`);
 
 function scheduleView(s: Schedule): ScheduleView {
   if (s.status === 'undated') {
-    return { status: 'undated', due: null, later: [], note: UNDATED_TEXT[s.reason] ?? `No date: ${s.detail}.`, trace: [] };
+    return { status: 'undated', due: null, later: [], note: undatedText(s.reason, s.detail), trace: [] };
   }
   return { status: s.status, due: s.due, later: s.status === 'upcoming' ? s.later : [], note: null, trace: s.trace };
 }
@@ -168,11 +161,18 @@ function effectiveStatus(run: repo.RunRow, nowMs: number): { status: RunStatusVi
   return { status: run.status, error: run.errorMessage };
 }
 
-async function runView(run: repo.RunRow, contract: repo.ContractRow, today: string, nowMs: number): Promise<RunView> {
+interface BriefExtras {
+  state: repo.ContractState;
+  decisions: repo.DecisionRow[];
+  leadDays: number;
+}
+
+async function runView(run: repo.RunRow, contract: repo.ContractRow, today: string, nowMs: number, extras: BriefExtras): Promise<RunView> {
   const { status, error } = effectiveStatus(run, nowMs);
   const reviewable = run.status === 'needs_review' || run.status === 'approved';
   const [clauses, obligations] = reviewable ? await Promise.all([repo.listClauses(run.id), repo.listObligations(run.id)]) : [[], []];
   const byId = new Map(clauses.map((c) => [c.id, c]));
+  const brief = reviewable ? buildBrief({ contract, run, obligations, clauses: byId, ...extras, today }) : null;
 
   const views: ObligationView[] = obligations.map((o) => {
     const decided = o.decision === 'approved' || o.decision === 'rejected';
@@ -234,6 +234,7 @@ async function runView(run: repo.RunRow, contract: repo.ContractRow, today: stri
       approved: views.filter((v) => v.decision === 'approved').length,
       rejected: views.filter((v) => v.decision === 'rejected').length,
     },
+    brief,
   };
 }
 
@@ -241,19 +242,24 @@ const SUPPORTED_NAME = /\.(pdf|docx)$/i;
 
 export async function loadPanel(issueId: string): Promise<PanelView> {
   await ensureSchema();
-  const [issue, contracts] = await Promise.all([getIssue(asUser(), issueId), repo.listContractsForIssue(issueId)]);
+  const [issue, contracts, leadDays] = await Promise.all([getIssue(asUser(), issueId), repo.listContractsForIssue(issueId), getLeadDays()]);
   const today = todayUtc();
   const nowMs = Date.now();
 
   const contractViews: ContractView[] = [];
   for (const contract of contracts) {
-    const run = await repo.latestRun(contract.id);
+    const [run, state, decisions] = await Promise.all([
+      repo.latestRun(contract.id),
+      repo.getContractState(contract.id),
+      repo.listDecisionsForContract(contract.id),
+    ]);
     contractViews.push({
       id: contract.id,
       fileName: contract.fileName,
       attachmentId: contract.attachmentId,
+      termIndex: contract.termIndex,
       createdAtMs: contract.createdAtMs,
-      run: run === null ? null : await runView(run, contract, today, nowMs),
+      run: run === null ? null : await runView(run, contract, today, nowMs, { state, decisions, leadDays }),
     });
   }
 

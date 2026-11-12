@@ -90,6 +90,58 @@ export interface ObligationView {
   lastError: string | null;
 }
 
+export type WindowStatusView = 'no_notice_rule' | 'undated' | 'later' | 'due' | 'passed';
+
+export interface DecisionRecordView {
+  id: string;
+  outcome: string;
+  outcomeLabel: string;
+  rationale: string;
+  termNumber: number;
+  decidedBy: string;
+  decidedAtMs: number;
+}
+
+export interface BriefView {
+  window: {
+    status: WindowStatusView;
+    deadline: string | null;
+    daysLeft: number | null;
+    decisionOpensOn: string | null;
+    termEnd: string | null;
+    timing: string | null;
+    note: string | null;
+  };
+  leadDays: number;
+  autoRenew: boolean;
+  termNumber: number;
+  currentTerm: { start: string; end: string } | null;
+  nextTerm: { number: number; start: string; end: string } | null;
+  /** Why the contract cannot be marked renewed, when it cannot. */
+  rolloverBlocked: string | null;
+  canUndoRenewal: boolean;
+  renewedAtMs: number | null;
+  clauses: Array<{ label: string; clause: ClauseView }>;
+  decisionItemKey: string | null;
+  decisions: DecisionRecordView[];
+  /** What marking the contract renewed would move, before and after. Only dates that change. */
+  shifts: Array<{ obligationId: string; label: string; before: string | null; after: string | null }>;
+  /** Approved work items whose due date no longer matches the contract, for example after a renewal. */
+  staleWorkItems: Array<{ obligationId: string; workItemKey: string; stored: string | null; current: string | null }>;
+}
+
+/** Context for a decision brief, loaded only when a person opens it, as that person. */
+export interface ContextView {
+  fetchedAtMs: number;
+  cached: boolean;
+  related: Array<{ key: string; summary: string; type: string; status: string; assignee: string | null; incident: boolean; viaCovenant: boolean }>;
+  goals: Array<{ name: string; key: string | null; url: string | null; due: string | null; owner: string | null }>;
+  teams: Array<{ name: string; url: string | null; members: number }>;
+  owners: Array<{ accountId: string; name: string | null; score: number; evidence: string[] }>;
+  /** Sections that could not be loaded. Missing data is said out loud, never shown as "none". */
+  problems: string[];
+}
+
 export interface RunView {
   id: string;
   status: RunStatusView;
@@ -111,12 +163,15 @@ export interface RunView {
   facts: FactView[];
   obligations: ObligationView[];
   counts: { total: number; waiting: number; approved: number; rejected: number };
+  brief: BriefView | null;
 }
 
 export interface ContractView {
   id: string;
   fileName: string;
   attachmentId: string;
+  /** The term a person has marked the contract renewed into. 0 is the initial term. */
+  termIndex: number;
   createdAtMs: number;
   run: RunView | null;
 }

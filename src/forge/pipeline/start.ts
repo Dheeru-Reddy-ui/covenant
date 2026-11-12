@@ -5,7 +5,7 @@ import { sha256Hex, sniffKind } from '../../parse/document';
 import * as repo from '../db/repo';
 import { ensureSchema } from '../db/schema';
 import { UserFacingError, loggableError } from '../errors';
-import { asUser, downloadAttachment, getIssue } from '../jira';
+import { type Requester, asUser, downloadAttachment, getIssue } from '../jira';
 
 /**
  * The Extract button. Runs in a UI resolver (25 s), so it only identifies the
@@ -30,10 +30,10 @@ export interface StartResult {
   status: repo.RunStatus;
 }
 
-export async function startExtraction(issueId: string, attachmentId: string, accountId: string): Promise<StartResult> {
+/** `req` is the signed-in user for the Extract button, and the app when the sample workspace queues its contracts. */
+export async function startExtraction(issueId: string, attachmentId: string, accountId: string, req: Requester = asUser()): Promise<StartResult> {
   const started = Date.now();
   await ensureSchema();
-  const req = asUser();
   const issue = await getIssue(req, issueId);
   const attachment = issue.attachments.find((a) => a.id === attachmentId);
   if (attachment === undefined) throw new UserFacingError('That file is no longer attached to this work item.');

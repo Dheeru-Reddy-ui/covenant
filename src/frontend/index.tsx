@@ -27,6 +27,7 @@ import type {
   RunView,
   StartReply,
 } from '../shared/panel';
+import { type RunAction, RenewalBrief } from './brief';
 import { EditObligationModal, EditTermsModal } from './forms';
 
 /**
@@ -230,6 +231,7 @@ function RunPanel({
   run,
   nowMs,
   actions,
+  runAction,
   onEditTerms,
   onExtract,
 }: {
@@ -237,6 +239,7 @@ function RunPanel({
   run: RunView;
   nowMs: number;
   actions: ObligationActions;
+  runAction: RunAction;
   onEditTerms: () => void;
   onExtract: () => void;
 }) {
@@ -281,6 +284,7 @@ function RunPanel({
             {run.quotesReturned} quotes were found word for word in the contract
             {run.rejectedCount > 0 ? `; ${run.rejectedCount} items without a matching quote were dropped` : ''}.
           </Text>
+          {run.brief && <RenewalBrief contractId={contract.id} termIndex={contract.termIndex} brief={run.brief} busy={actions.busy !== null} run={runAction} />}
           <Facts run={run} onEdit={onEditTerms} />
           <Heading size="xsmall">
             {run.counts.total === 0
@@ -351,6 +355,21 @@ const App = () => {
       if (text) setNotice({ kind: 'info', text });
     }
     await load();
+  };
+
+  const runAction: RunAction = async (key, payload, success) => {
+    setBusy(`action:${key}`);
+    setNotice(null);
+    const reply = await call<unknown>(key, payload);
+    setBusy(null);
+    if (!reply.ok) {
+      setNotice({ kind: 'error', text: reply.error });
+      return reply.error;
+    }
+    const text = success?.(reply.data);
+    if (text) setNotice({ kind: 'info', text });
+    await load();
+    return null;
   };
 
   const actions: ObligationActions = {
@@ -427,6 +446,7 @@ const App = () => {
           run={current.run}
           nowMs={view.nowMs}
           actions={actions}
+          runAction={runAction}
           onEditTerms={() => setEditingTerms(current.run)}
           onExtract={() => void extract(current.attachmentId)}
         />

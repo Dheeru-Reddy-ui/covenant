@@ -136,13 +136,48 @@ CREATE TABLE IF NOT EXISTS decision (
   KEY ix_decision_contract (contract_id)
 )`;
 
+/** What the daily check last worked out for a contract, and the "Decision due" item it opened. A new table, not ALTERs. */
+const V007_CONTRACT_STATE = `
+CREATE TABLE IF NOT EXISTS contract_state (
+  contract_id VARCHAR(36) NOT NULL PRIMARY KEY,
+  notice_deadline DATE NULL,
+  notice_status VARCHAR(16) NULL,
+  window_checked_at_ms BIGINT NULL,
+  decision_item_key VARCHAR(64) NULL,
+  decision_item_term INT NULL,
+  decision_item_claimed_at_ms BIGINT NULL,
+  renewed_by VARCHAR(128) NULL,
+  renewed_at_ms BIGINT NULL
+)`;
+
+const V008_APP_SETTING = `
+CREATE TABLE IF NOT EXISTS app_setting (
+  name VARCHAR(64) NOT NULL PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_by VARCHAR(128) NULL,
+  updated_at_ms BIGINT NOT NULL
+)`;
+
+/** Graph and Jira context for a decision brief, per contract and per user: results are filtered by each user's permissions. */
+const V009_CONTEXT_CACHE = `
+CREATE TABLE IF NOT EXISTS context_cache (
+  contract_id VARCHAR(36) NOT NULL,
+  account_id VARCHAR(128) NOT NULL,
+  fetched_at_ms BIGINT NOT NULL,
+  payload MEDIUMTEXT NOT NULL,
+  PRIMARY KEY (contract_id, account_id)
+)`;
+
 const migrations = migrationRunner
   .enqueue('v001_create_spike_probe', V001_SPIKE_PROBE)
   .enqueue('v002_create_contract', V002_CONTRACT)
   .enqueue('v003_create_extraction_run', V003_EXTRACTION_RUN)
   .enqueue('v004_create_clause', V004_CLAUSE)
   .enqueue('v005_create_obligation', V005_OBLIGATION)
-  .enqueue('v006_create_decision', V006_DECISION);
+  .enqueue('v006_create_decision', V006_DECISION)
+  .enqueue('v007_create_contract_state', V007_CONTRACT_STATE)
+  .enqueue('v008_create_app_setting', V008_APP_SETTING)
+  .enqueue('v009_create_context_cache', V009_CONTEXT_CACHE);
 
 let ready: Promise<void> | null = null;
 

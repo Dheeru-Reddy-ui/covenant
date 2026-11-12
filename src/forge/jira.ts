@@ -92,6 +92,14 @@ export async function getIssue(req: Requester, issueIdOrKey: string): Promise<Is
   };
 }
 
+/** Whether the caller can see a work item. Deleted and hidden items look the same to Jira: both are a no. */
+export async function canSeeIssue(req: Requester, issueIdOrKey: string): Promise<boolean> {
+  const response = await req.requestJira(route`/rest/api/3/issue/${issueIdOrKey}?fields=summary`, { headers: { Accept: 'application/json' } });
+  if (response.ok) return true;
+  if (response.status === 403 || response.status === 404) return false;
+  throw await failure(response, 'checking access to a work item');
+}
+
 export async function downloadAttachment(req: Requester, attachmentId: string): Promise<Uint8Array> {
   // redirect=false makes Jira return the bytes itself instead of a 303 to the media service (spike S1).
   const response = await req.requestJira(route`/rest/api/3/attachment/content/${attachmentId}?redirect=false`);
@@ -99,7 +107,7 @@ export async function downloadAttachment(req: Requester, attachmentId: string): 
   return new Uint8Array(await response.arrayBuffer());
 }
 
-interface IssueTypeResponse {
+export interface IssueTypeResponse {
   id: string;
   name: string;
   subtask?: boolean;
@@ -144,7 +152,7 @@ export interface CreatedChild {
   dueDateSet: boolean;
 }
 
-async function postIssue(req: Requester, fields: Record<string, unknown>): Promise<{ id: string; key: string }> {
+export async function postIssue(req: Requester, fields: Record<string, unknown>): Promise<{ id: string; key: string }> {
   const response = await req.requestJira(route`/rest/api/3/issue`, {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
@@ -182,4 +190,168 @@ export async function createChild(req: Requester, child: ChildRequest): Promise<
     body: JSON.stringify({ fields: { duedate: child.dueDate } }),
   });
   return { ...created, dueDateSet: edit.ok };
+}
+
+export async function updateDueDate(req: Requester, issueKey: string, dueDate: IsoDate | null): Promise<void> {
+  const response = await req.requestJira(route`/rest/api/3/issue/${issueKey}`, {
+    method: 'PUT',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields: { duedate: dueDate } }),
+  });
+  if (!response.ok) throw await failure(response, `changing the due date of ${issueKey}`);
+}
+
+export async function addComment(req: Requester, issueKey: string, body: AdfDoc): Promise<void> {
+  const response = await req.requestJira(route`/rest/api/3/issue/${issueKey}/comment`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ body }),
+  });
+  if (!response.ok) throw await failure(response, `commenting on ${issueKey}`);
+}
+
+export interface FoundIssue {
+  id: string;
+  key: string;
+  summary: string;
+  status: string;
+  statusCategory: string;
+  issueType: string;
+  labels: string[];
+  assignee: Person | null;
+  reporter: Person | null;
+  updated: string | null;
+}
+
+/** accountType is "app" for app users, such as Covenant itself when it created a work item. */
+export interface Person {
+  accountId: string;
+  displayName: string;
+  accountType: string;
+}
+
+interface SearchResponse {
+  issues?: Array<{
+    id: string;
+    key: string;
+    fields?: {
+      summary?: string;
+      status?: { name?: string; statusCategory?: { key?: string } };
+      issuetype?: { name?: string };
+      labels?: string[];
+      assignee?: { accountId: string; displayName: string; accountType?: string } | null;
+      reporter?: { accountId: string; displayName: string; accountType?: string } | null;
+      updated?: string;
+    };
+  }>;
+  nextPageToken?: string;
+}
+
+const SEARCH_FIELDS = ['summary', 'status', 'issuetype', 'labels', 'assignee', 'reporter', 'updated'];
+
+/** JQL search, following nextPageToken up to `max` results. Runs with the caller's permissions. */
+export async function searchIssues(req: Requester, jql: string, max = 100): Promise<FoundIssue[]> {
+  const found: FoundIssue[] = [];
+  let nextPageToken: string | undefined;
+  do {
+    const response = await req.requestJira(route`/rest/api/3/search/jql`, {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jql, fields: SEARCH_FIELDS, maxResults: Math.min(100, max - found.length), ...(nextPageToken ? { nextPageToken } : {}) }),
+    });
+    if (!response.ok) throw await failure(response, 'searching for work items');
+    const page = (await response.json()) as SearchResponse;
+    for (const issue of page.issues ?? []) {
+      const f = issue.fields ?? {};
+      found.push({
+        id: String(issue.id),
+        key: issue.key,
+        summary: f.summary ?? '',
+        status: f.status?.name ?? '',
+        statusCategory: f.status?.statusCategory?.key ?? '',
+        issueType: f.issuetype?.name ?? '',
+        labels: f.labels ?? [],
+        assignee: f.assignee ? { accountId: f.assignee.accountId, displayName: f.assignee.displayName, accountType: f.assignee.accountType ?? 'atlassian' } : null,
+        reporter: f.reporter ? { accountId: f.reporter.accountId, displayName: f.reporter.displayName, accountType: f.reporter.accountType ?? 'atlassian' } : null,
+        updated: f.updated ?? null,
+      });
+    }
+    nextPageToken = page.nextPageToken;
+  } while (nextPageToken && found.length < max);
+  return found;
+}
+
+export interface ProjectInfo {
+  id: string;
+  key: string;
+  name: string;
+}
+
+/** Projects the caller can create work items in. */
+export async function listCreatableProjects(req: Requester): Promise<ProjectInfo[]> {
+  const response = await req.requestJira(route`/rest/api/3/project/search?action=create&maxResults=50&orderBy=name`, {
+    headers: { Accept: 'application/json' },
+  });
+  if (!response.ok) throw await failure(response, 'listing projects');
+  const page = (await response.json()) as { values?: Array<{ id: string; key: string; name: string }> };
+  return (page.values ?? []).map((p) => ({ id: String(p.id), key: p.key, name: p.name }));
+}
+
+/** The HTTP status of a cheap Jira call, to tell whether Jira answers this caller at all. */
+export async function jiraStatus(req: Requester): Promise<number> {
+  const response = await req.requestJira(route`/rest/api/3/serverInfo`, { headers: { Accept: 'application/json' } });
+  return response.status;
+}
+
+/** True when the caller is a Jira administrator. */
+export async function isJiraAdmin(req: Requester): Promise<boolean> {
+  const response = await req.requestJira(route`/rest/api/3/mypermissions?permissions=ADMINISTER`, { headers: { Accept: 'application/json' } });
+  if (!response.ok) return false;
+  const body = (await response.json()) as { permissions?: { ADMINISTER?: { havePermission?: boolean } } };
+  return body.permissions?.ADMINISTER?.havePermission === true;
+}
+
+export async function projectIssueTypes(req: Requester, projectId: string): Promise<IssueTypeResponse[]> {
+  const response = await req.requestJira(route`/rest/api/3/issuetype/project?projectId=${projectId}`, { headers: { Accept: 'application/json' } });
+  if (!response.ok) throw await failure(response, "listing the project's work types");
+  return (await response.json()) as IssueTypeResponse[];
+}
+
+export async function linkIssues(req: Requester, fromKey: string, toKey: string): Promise<void> {
+  const response = await req.requestJira(route`/rest/api/3/issueLink`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: { name: 'Relates' }, inwardIssue: { key: fromKey }, outwardIssue: { key: toKey } }),
+  });
+  if (!response.ok) throw await failure(response, `linking ${fromKey} to ${toKey}`);
+}
+
+/**
+ * Attaches a file. The multipart body is built by hand as plain bytes: Forge
+ * developers report FormData bodies arriving rejected or corrupted, and bytes
+ * leave nothing for the runtime to re-encode. Returns the new attachment's id.
+ */
+export async function uploadAttachment(req: Requester, issueKey: string, fileName: string, contentType: string, bytes: Uint8Array): Promise<string> {
+  const boundary = `covenant${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+  const safeName = fileName.replace(/["\r\n]/g, '_');
+  const head = new TextEncoder().encode(
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${safeName}"\r\nContent-Type: ${contentType}\r\n\r\n`,
+  );
+  const tail = new TextEncoder().encode(`\r\n--${boundary}--\r\n`);
+  const body = new Uint8Array(head.length + bytes.length + tail.length);
+  body.set(head, 0);
+  body.set(bytes, head.length);
+  body.set(tail, head.length + bytes.length);
+
+  const response = await req.requestJira(route`/rest/api/3/issue/${issueKey}/attachments`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'X-Atlassian-Token': 'no-check', 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+    // `body` was allocated at exactly this length, so its buffer holds nothing else.
+    body: body.buffer,
+  });
+  if (!response.ok) throw await failure(response, `attaching ${safeName} to ${issueKey}`);
+  const created = (await response.json()) as Array<{ id: string }>;
+  const first = created[0];
+  if (first === undefined) throw new JiraError(500, `Jira accepted the attachment for ${issueKey} but returned no attachment`);
+  return String(first.id);
 }

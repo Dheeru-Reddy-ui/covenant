@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Schedule } from '../src/schedule';
-import { type AdfNode, KIND_LABELS, type WorkItemInput, adfText, draftWorkItem } from '../src/workitem';
+import { type AdfNode, KIND_LABELS, type WorkItemInput, adfText, draftDecisionItem, draftWorkItem } from '../src/workitem';
 import { type ObligationRule, ObligationRuleSchema } from '../src/schema';
 import { QUOTES, noticeRule, paymentRule } from './fixtures';
 
@@ -96,6 +96,40 @@ describe('draftWorkItem', () => {
     walk(draft.description, (n) => {
       if (n.type === 'text') expect((n.text ?? '').length).toBeGreaterThan(0);
     });
+  });
+
+  it('drafts the decision-due item with the deadline as its due date and the clause it rests on', () => {
+    const draft = draftDecisionItem({
+      fileName: 'northwind-msa.pdf',
+      parentKey: 'MOBL-57',
+      deadline: '2026-11-30',
+      daysLeft: 18,
+      termEnd: '2027-02-28',
+      timing: '90 days before the end of the current term',
+      clause: { quote: QUOTES.notice, page: 2, pageEnd: 2, paginated: true },
+    });
+    expect(draft.summary).toBe('Decision due: renew, renegotiate or terminate northwind-msa.pdf by 2026-11-30');
+    expect(draft.dueDate).toBe('2026-11-30');
+    const text = adfText(draft.description);
+    expect(text).toContain('18 days');
+    expect(text).toContain('2027-02-28');
+    expect(text).toContain(QUOTES.notice);
+    expect(text).toContain('page 2');
+    expect(text).toContain('MOBL-57');
+  });
+
+  it('keeps a decision-due title within 255 characters and copes without a clause', () => {
+    const draft = draftDecisionItem({
+      fileName: `${'a'.repeat(300)}.pdf`,
+      parentKey: 'MOBL-57',
+      deadline: '2026-11-30',
+      daysLeft: 1,
+      termEnd: null,
+      timing: '90 days before the end of the current term',
+      clause: null,
+    });
+    expect(draft.summary.length).toBeLessThanOrEqual(255);
+    expect(adfText(draft.description)).toContain('1 day');
   });
 
   it('has a label for every kind', () => {
