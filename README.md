@@ -17,11 +17,11 @@ Before a renewal notice window closes, Covenant opens a **Decision due** work it
 
 ## Install and try it (about 10 minutes)
 
-You need a Jira Cloud site where you are a site admin. Rovo is optional. Turning on the MCP tools for outside clients needs an organization admin.
+You need a Jira Cloud site where you are a site admin, with at least one Jira space (project). On a brand-new site, Jira asks you to create a first space before anything else; any template works, and Covenant was tested in a Business space. Rovo is optional. Turning on the MCP tools for outside clients needs an organization admin.
 
-1. **Install.** Open the installation link from the submission, choose your site and **Jira**, review the permissions, and install.
-2. **Check the setup.** In Jira, open **Settings** (the gear), then **Apps**, then **Covenant** in the sidebar. The **Preflight** section checks the database, the model, Jira, Teamwork Graph and the daily check, and says what to do about anything that is not green.
-3. **Load the sample workspace.** On the same page, under **Sample workspace**, pick a project you can create work items in and click **Load sample workspace**. It creates three fictional contracts as work items, each with its Word file attached, plus related tasks and an incident, and extracts them. Their notice deadlines fall about 20, 50 and 85 days from today. Allow a minute or two. Extraction uses a few cents of model tokens, billed to the app's developer, not to you.
+1. **Install.** Open the installation link from the submission and click **Get app**. Choose your site (Covenant is added to Jira), review the permissions, and click **Install**.
+2. **Check the setup.** In Jira, open **Settings** (the gear at the top right), then **Marketplace apps**. In the settings sidebar, under **Apps**, click **Covenant**. The **Preflight** section checks the database, the model, Jira, Teamwork Graph and the daily check, and says what to do about anything that is not green. The daily check shows a warning until it has run once; step 8 runs it.
+3. **Load the sample workspace.** On the same page, under **Sample workspace**, pick a project you can create work items in and click **Load sample workspace**. It creates three fictional contracts as work items, each with its Word file attached, plus related tasks and an incident, and extracts them. Their notice deadlines fall about 20, 50 and 85 days from today. The page shows progress as it goes; it took about 30 seconds on a clean site. Extraction uses a few cents of model tokens, billed to the app's developer, not to you.
 4. **Open a contract.** Open the work item **Contract: Quillfeather Systems route planning MSA**. If you don't see the Covenant panel, open the work item's **View app actions** menu and choose **Covenant**.
 5. **Review.** Each obligation shows its clause, its rule and its due date. Click **Approve and create work item** on one, and a child work item appears with its due date set. Try **Edit** or **Reject** on another.
 6. **Decide on the renewal.** In **Renewal decision**:
@@ -30,7 +30,7 @@ You need a Jira Cloud site where you are a site admin. Rovo is optional. Turning
    - Click **Mark renewed** to watch the dates move to the next term. **Undo renewal** puts them back.
 7. **See the portfolio.** Open **Apps** in Jira's sidebar, then **Covenant register**, for every obligation by due date with 30, 60 and 90 day views. The **Inside notice window**, **No owner** and **Overdue** flags mark what needs attention.
 8. **Get the Decision due items.** Covenant's daily check opens a **Decision due** work item for each contract whose notice deadline is inside the decision window (60 days by default). It runs within a day of installing. To run it now, use **Run the daily check now** on the admin page.
-9. **Ask Rovo** (if your site has Rovo). Open Rovo chat, pick the **Covenant contract assistant** agent, and ask *Which notice deadlines fall in the next 90 days?*
+9. **Ask Rovo** (if your site has Rovo: look for **Ask Rovo** in Jira's top bar). Open Rovo chat, click the agent name at the top of the chat, choose **Covenant contract assistant**, and ask *Which notice deadlines fall in the next 90 days?* New sites may not have Rovo; the demo video shows the agent.
 10. **Use an outside MCP client** (optional). Follow [docs/mcp.md](docs/mcp.md): an organization admin turns on Covenant's tools, then any MCP client connects to `https://mcp.atlassian.com/forge/0eb73671-31a0-4410-ae90-4d8ba0607caa`.
 
 To try your own contract, attach a text PDF or Word file (up to 15 MB and about 100 pages) to any work item and click **Extract** in its Covenant panel.
