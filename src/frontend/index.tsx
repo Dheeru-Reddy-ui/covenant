@@ -422,7 +422,10 @@ const App = () => {
       <Stack space="space.100">
         <Heading size="xsmall">Contract files on {view.issueKey}</Heading>
         {supported.length === 0 && (
-          <Text>Attach a contract to this work item (a text PDF or a Word .docx file, up to about 40 pages), then click Extract.</Text>
+          <Text>
+            Attach a contract to this work item (a text PDF or a Word .docx file, up to 15 MB and about 100 pages), then click Extract.
+            {view.attachments.length > 0 ? ' The files attached here are not PDF or Word files, so Covenant cannot read them.' : ''}
+          </Text>
         )}
         {supported.map((a) => {
           const contract = view.contracts.find((c) => c.id === a.contractId);
@@ -433,14 +436,18 @@ const App = () => {
                 {a.fileName} ({kb(a.size)})
               </Text>
               {status && <Lozenge appearance={RUN_LABEL[status][1]}>{RUN_LABEL[status][0]}</Lozenge>}
-              <LoadingButton
-                appearance={contract ? 'subtle' : 'primary'}
-                isLoading={busy === `extract:${a.id}`}
-                isDisabled={busy !== null && busy !== `extract:${a.id}`}
-                onClick={() => void extract(a.id)}
-              >
-                Extract
-              </LoadingButton>
+              {a.tooLarge ? (
+                <Text size="small">Too large: Covenant reads files up to 15 MB.</Text>
+              ) : (
+                <LoadingButton
+                  appearance={contract ? 'subtle' : 'primary'}
+                  isLoading={busy === `extract:${a.id}`}
+                  isDisabled={busy !== null && busy !== `extract:${a.id}`}
+                  onClick={() => void extract(a.id)}
+                >
+                  Extract
+                </LoadingButton>
+              )}
               {contract && current?.id !== contract.id && (
                 <Button appearance="subtle" onClick={() => setSelected(contract.id)}>
                   Show

@@ -6,6 +6,7 @@ import { windowFor } from '../decisions/brief';
 import { loggableError } from '../errors';
 import { asApp, childIssueType, createChild, getIssue } from '../jira';
 import { DAILY_LAST_RUN, getLeadDays, putJson } from '../settings';
+import { runPrivacyUpkeep } from './privacy';
 import { backfillClauseSections } from './sections';
 
 /**
@@ -100,6 +101,8 @@ export async function runDailyCheck(source: DailySummary['source']): Promise<Dai
 
   // Older extractions get their clause numbers here, a few contracts a day. A failure must not stop the check.
   await backfillClauseSections().catch((error: unknown) => console.error(`sections backfill failed error=${loggableError(error)}`));
+  // Personal data reporting and clean-up, as Atlassian's user privacy guidelines require.
+  await runPrivacyUpkeep().catch((error: unknown) => console.error(`privacy upkeep failed error=${loggableError(error)}`));
 
   summary.ms = Date.now() - started;
   await putJson(DAILY_LAST_RUN, summary, null);

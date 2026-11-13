@@ -38,7 +38,7 @@ export async function startExtraction(issueId: string, attachmentId: string, acc
   const attachment = issue.attachments.find((a) => a.id === attachmentId);
   if (attachment === undefined) throw new UserFacingError('That file is no longer attached to this work item.');
   if (attachment.size > MAX_ATTACHMENT_BYTES) {
-    throw new UserFacingError('That file is larger than 15 MB. Covenant reads contracts of up to about 40 pages.');
+    throw new UserFacingError('That file is larger than 15 MB, which is as large as Covenant reads. A text PDF or Word file of about 100 pages is far smaller.');
   }
 
   const bytes = await downloadAttachment(req, attachment.id);

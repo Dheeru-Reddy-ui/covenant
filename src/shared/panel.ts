@@ -24,6 +24,8 @@ export interface AttachmentView {
   size: number;
   /** PDF or DOCX by name. The file's first bytes decide for certain when Extract is clicked. */
   supported: boolean;
+  /** Over Covenant's file-size limit, so Extract is not offered. */
+  tooLarge: boolean;
   contractId: string | null;
 }
 

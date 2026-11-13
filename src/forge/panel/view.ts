@@ -23,6 +23,7 @@ import type {
   TermsView,
 } from '../../shared/panel';
 import { scheduleFor } from '../dates';
+import { MAX_ATTACHMENT_BYTES } from '../pipeline/start';
 import * as repo from '../db/repo';
 import { ensureSchema } from '../db/schema';
 import { buildBrief } from '../decisions/brief';
@@ -280,6 +281,7 @@ export async function loadPanel(issueId: string, today: string): Promise<PanelVi
       fileName: a.filename,
       size: a.size,
       supported: SUPPORTED_NAME.test(a.filename),
+      tooLarge: a.size > MAX_ATTACHMENT_BYTES,
       contractId: contracts.find((c) => c.attachmentId === a.id)?.id ?? null,
     })),
     contracts: contractViews,

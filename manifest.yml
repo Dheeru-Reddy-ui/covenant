@@ -296,3 +296,6 @@ permissions:
     - read:graph:team:atlassian
     - read:graph:issue-comment:jira
     - read:graph:project:jira
+    # Atlassian's personal data reporting API: Covenant reports the account ids it stores each week,
+    # and erases a closed account's id. Required for apps that store personal data.
+    - report:personal-data

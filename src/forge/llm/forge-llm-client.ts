@@ -9,6 +9,20 @@ import {
   repairInstruction,
   replayableArguments,
 } from '../../../packages/core/src';
+import { withRetries } from '../retry';
+
+const BUSY_STATUSES: ReadonlySet<number> = new Set([429, 500, 502, 503, 504, 529]);
+
+/**
+ * Too many requests, or the model service is overloaded or briefly down. A bad
+ * request is not retried. @forge/llm does not export ForgeLlmAPIError, so it is
+ * recognised by its name and status.
+ */
+const isBusy = (error: unknown): boolean => {
+  if (!(error instanceof Error) || error.name !== 'ForgeLlmAPIError') return false;
+  const status = (error as Error & { status?: unknown }).status;
+  return typeof status === 'number' && BUSY_STATUSES.has(status);
+};
 
 /**
  * Production adapter: core's LlmClient over Forge LLMs (`@forge/llm` chat()).
@@ -57,14 +71,20 @@ export class ForgeLlmClient implements LlmClient {
       });
     }
 
-    const response = await chat({
-      model: this.modelId,
-      temperature: 0,
-      max_completion_tokens: request.maxOutputTokens,
-      messages,
-      tools,
-      tool_choice: { type: 'function', function: { name: request.tool.name } },
-    });
+    // Rate limits (100 requests and 500k tokens a minute per install) and overload pass with a wait.
+    // This runs in the extraction worker, which has 900 s, so it can afford to wait half a minute.
+    const response = await withRetries(
+      () =>
+        chat({
+          model: this.modelId,
+          temperature: 0,
+          max_completion_tokens: request.maxOutputTokens,
+          messages,
+          tools,
+          tool_choice: { type: 'function', function: { name: request.tool.name } },
+        }),
+      { retryable: () => false, retryableError: isBusy, delaysMs: [5_000, 25_000] },
+    );
     const choice = response.choices[0];
     const call = choice?.message.tool_calls?.find((c) => c.function.name === request.tool.name);
     return {

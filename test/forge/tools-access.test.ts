@@ -268,6 +268,27 @@ describe('the same tools for a person who can see it (so the checks above are no
     });
   });
 
+  it('logs ids, counts and timings only, even while handling the contract text', async () => {
+    const lines: string[] = [];
+    const capture = (...args: unknown[]) => void lines.push(args.map(String).join(' '));
+    const log = vi.spyOn(console, 'log').mockImplementation(capture);
+    const error = vi.spyOn(console, 'error').mockImplementation(capture);
+    try {
+      await listObligationsTool({ ...envelope }, caller);
+      await getClauseTool({ ...envelope, obligationId: h.obligation.id }, caller);
+      await getRenewalBriefTool({ ...envelope, contract: 'LEGAL-1' }, caller);
+      await recordDecisionTool({ ...envelope, contract: 'LEGAL-1', outcome: 'renew', rationale }, caller);
+      await recordDecisionTool({ ...envelope, contract: 'LEGAL-1', outcome: 'renew', rationale, confirm: true }, caller);
+    } finally {
+      log.mockRestore();
+      error.mockRestore();
+    }
+    expect(lines.length).toBeGreaterThanOrEqual(5);
+    const all = lines.join('\n');
+    // Ids are allowed in logs (contract-7f3a appears); text is not.
+    for (const secret of [...SECRETS.filter((s) => s !== h.contract.id), rationale, h.obligation.rule.summary]) expect(all).not.toContain(secret);
+  });
+
   it('previews a decision without confirm and records it only with confirm', async () => {
     const preview = await recordDecisionTool({ ...envelope, contract: 'LEGAL-1', outcome: 'renew', rationale }, caller);
     expect(preview).toMatchObject({ ok: false, recorded: false, refused: 'confirmation_required' });

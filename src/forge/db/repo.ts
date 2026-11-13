@@ -912,3 +912,97 @@ export async function putCachedContext(contractId: string, accountId: string, pa
   );
   await change('UPDATE context_cache SET fetched_at_ms = ?, payload = ? WHERE contract_id = ? AND account_id = ?', nowMs, text, contractId, accountId);
 }
+
+/** Context older than this is never served again, so the daily check deletes it: names are not kept. */
+export async function purgeContextBefore(beforeMs: number): Promise<number> {
+  return change('DELETE FROM context_cache WHERE fetched_at_ms < ?', beforeMs);
+}
+
+// ---- personal data (Atlassian's personal data reporting API) ----
+
+/** A LIKE pattern that matches the text literally: account ids may contain `_`, which LIKE treats as a wildcard. */
+const containing = (text: string): string => `%${text.replace(/[\%_]/g, (c) => `\${c}`)}%`;
+
+const ACCOUNT_COLUMNS: ReadonlyArray<[table: string, column: string]> = [
+  ['contract', 'created_by'],
+  ['extraction_run', 'requested_by'],
+  ['obligation', 'decided_by'],
+  ['decision', 'decided_by'],
+  ['contract_state', 'renewed_by'],
+  ['app_setting', 'updated_by'],
+];
+
+/** Every account id Covenant stores, including reviewers named inside a run's edited term facts. */
+export async function listStoredAccountIds(): Promise<string[]> {
+  const ids = new Set<string>();
+  for (const [table, column] of ACCOUNT_COLUMNS) {
+    for (const row of await select(`SELECT DISTINCT ${column} AS id FROM ${table} WHERE ${column} IS NOT NULL`)) ids.add(String(row.id));
+  }
+  for (const row of await select(`SELECT facts_json FROM extraction_run WHERE facts_json LIKE ?`, containing('"editedBy":"'))) {
+    const editedBy = json<StoredFacts>(row.facts_json)?.editedBy;
+    if (editedBy) ids.add(editedBy);
+  }
+  return [...ids];
+}
+
+export async function trackAccounts(ids: readonly string[], nowMs: number): Promise<void> {
+  for (let i = 0; i < ids.length; i += 100) {
+    const chunk = ids.slice(i, i + 100);
+    await change(
+      `INSERT IGNORE INTO personal_data_report (account_id, stored_at_ms) VALUES ${chunk.map(() => '(?, ?)').join(', ')}`,
+      ...chunk.flatMap((id) => [id, nowMs]),
+    );
+  }
+}
+
+export async function listTrackedAccounts(): Promise<Array<{ accountId: string; storedAtMs: number; reportedAtMs: number | null }>> {
+  return (await select('SELECT account_id, stored_at_ms, reported_at_ms FROM personal_data_report')).map((r) => ({
+    accountId: String(r.account_id),
+    storedAtMs: num(r.stored_at_ms),
+    reportedAtMs: numOrNull(r.reported_at_ms),
+  }));
+}
+
+export async function markAccountsReported(ids: readonly string[], nowMs: number): Promise<void> {
+  for (let i = 0; i < ids.length; i += 100) {
+    const chunk = ids.slice(i, i + 100);
+    await change(`UPDATE personal_data_report SET reported_at_ms = ? WHERE account_id IN (${marks(chunk.length)})`, nowMs, ...chunk);
+  }
+}
+
+/** Atlassian says the account changed: Covenant keeps no copy of its profile, so only cached context naming it goes. */
+export async function refreshAccount(accountId: string, nowMs: number): Promise<void> {
+  await change('DELETE FROM context_cache WHERE payload LIKE ?', containing(accountId));
+  await change('UPDATE personal_data_report SET stored_at_ms = ? WHERE account_id = ?', nowMs, accountId);
+}
+
+/** Atlassian says the account is closed: its id is replaced everywhere Covenant stored it, and cached context naming it goes. */
+export async function eraseAccount(accountId: string, erased: string, nowMs: number): Promise<void> {
+  for (const [table, column] of ACCOUNT_COLUMNS) {
+    if (table === 'app_setting') await change(`UPDATE app_setting SET updated_by = NULL WHERE updated_by = ?`, accountId);
+    else await change(`UPDATE ${table} SET ${column} = ? WHERE ${column} = ?`, erased, accountId);
+  }
+  for (const row of await select('SELECT id, facts_json FROM extraction_run WHERE facts_json LIKE ?', containing(accountId))) {
+    const facts = json<StoredFacts>(row.facts_json);
+    if (facts?.editedBy !== accountId) continue;
+    await change('UPDATE extraction_run SET facts_json = ?, updated_at_ms = ? WHERE id = ?', JSON.stringify({ ...facts, editedBy: null }), nowMs, String(row.id));
+  }
+  await change('DELETE FROM context_cache WHERE account_id = ?', accountId);
+  await change('DELETE FROM context_cache WHERE payload LIKE ?', containing(accountId));
+  await change('DELETE FROM personal_data_report WHERE account_id = ?', accountId);
+}
+
+/** Decision snapshots written before Covenant stopped keeping people in them. */
+export async function listDecisionSnapshotsWithPeople(limit: number): Promise<Array<{ id: string; brief: unknown }>> {
+  const rows = await select(
+    `SELECT id, brief_json FROM decision WHERE brief_json LIKE ? OR brief_json LIKE ? OR brief_json LIKE ? LIMIT ${Math.max(1, Math.min(500, Math.floor(limit)))}`,
+    containing('"owners":'),
+    containing('"assignee":'),
+    containing('"owner":'),
+  );
+  return rows.map((r) => ({ id: String(r.id), brief: json<unknown>(r.brief_json) }));
+}
+
+export async function replaceDecisionSnapshot(id: string, brief: unknown): Promise<void> {
+  await change('UPDATE decision SET brief_json = ? WHERE id = ?', JSON.stringify(brief), id);
+}

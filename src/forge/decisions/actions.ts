@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { type AdfDoc, parseDecisionInput, rolloverCheck } from '../../../packages/core/src';
+import { type AdfDoc, depersonaliseSnapshot, parseDecisionInput, rolloverCheck } from '../../../packages/core/src';
 import { dueDateOf, scheduleFor, todayUtc } from '../dates';
 import * as repo from '../db/repo';
 import { ensureSchema } from '../db/schema';
@@ -44,6 +44,9 @@ export async function loadBundle(issueId: string, contractId: string): Promise<B
 
 const paragraph = (text: string) => ({ type: 'paragraph', content: [{ type: 'text', text }] });
 
+const snapshotContext = (context: unknown): unknown =>
+  context === null ? null : (depersonaliseSnapshot({ context }).value as { context: unknown }).context;
+
 export async function recordDecision(issueId: string, contractId: string, input: unknown, accountId: string): Promise<{ id: string; commentedOn: string | null }> {
   const parsed = parseDecisionInput(input);
   if (!parsed.ok) throw new UserFacingError(`Not recorded: ${parsed.problems.join('; ')}`);
@@ -70,8 +73,9 @@ export async function recordDecision(issueId: string, contractId: string, input:
       }),
     extractorVersion: bundle.run.extractorVersion,
     model: bundle.run.model,
-    // The related work, goals and owners this person last saw, if they opened them.
-    context: (await repo.getCachedContext(bundle.contract.id, accountId))?.payload ?? null,
+    // The related work, goals and teams this person last saw, if they opened them. People are left out:
+    // names would be personal data kept indefinitely, and the record does not need them.
+    context: snapshotContext((await repo.getCachedContext(bundle.contract.id, accountId))?.payload ?? null),
   };
 
   const id = randomUUID();

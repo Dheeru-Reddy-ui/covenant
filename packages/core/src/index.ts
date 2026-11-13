@@ -27,6 +27,7 @@ export * from './register';
 export * from './owners';
 export * from './tools';
 export * from './sections';
+export * from './privacy';
 export {
   AnchorEventSchema,
   ClauseSchema,

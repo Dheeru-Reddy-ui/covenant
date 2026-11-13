@@ -1,5 +1,6 @@
 import api, { route } from '@forge/api';
 import type { AdfDoc, IsoDate } from '../../packages/core/src';
+import { retryAfterMs, withRetries } from './retry';
 
 /**
  * Jira REST calls. Resolvers call as the signed-in user, so Jira's own
@@ -9,8 +10,26 @@ import type { AdfDoc, IsoDate } from '../../packages/core/src';
 
 export type Requester = Pick<ReturnType<typeof api.asApp>, 'requestJira'>;
 
-export const asUser = (): Requester => api.asUser();
-export const asApp = (): Requester => api.asApp();
+type JiraResponse = Awaited<ReturnType<Requester['requestJira']>>;
+
+/**
+ * Jira answers 429 (too many requests) or 503 under load. Wait as long as it
+ * asks, capped at 5 s so a resolver stays inside its 25 s, and try twice more.
+ * A request that is still refused is reported like any other refusal.
+ */
+function patient(inner: Requester): Requester {
+  const requestJira = (...args: Parameters<Requester['requestJira']>): Promise<JiraResponse> =>
+    withRetries(() => inner.requestJira(...args), {
+      retryable: (r) => r.status === 429 || r.status === 503,
+      delaysMs: [1_000, 3_000],
+      waitFor: (r) => retryAfterMs(r.headers?.get?.('Retry-After') ?? null),
+      maxWaitMs: 5_000,
+    });
+  return { requestJira };
+}
+
+export const asUser = (): Requester => patient(api.asUser());
+export const asApp = (): Requester => patient(api.asApp());
 
 export class JiraError extends Error {
   override name = 'JiraError';
@@ -42,7 +61,9 @@ async function failure(response: { status: number; text: () => Promise<string> }
       ? 'you do not have permission'
       : response.status === 404
         ? 'it was not found or you cannot see it'
-        : details.join('; ') || `HTTP ${response.status}`;
+        : response.status === 429 || response.status === 503
+          ? 'Jira is handling too many requests right now. Wait a minute and try again'
+          : details.join('; ') || `HTTP ${response.status}`;
   return new JiraError(response.status, `Jira refused ${doing}: ${why}`.slice(0, 900), fields);
 }
 

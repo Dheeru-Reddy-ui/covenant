@@ -375,7 +375,8 @@ export function RenewalBrief({
                   <Text size="small">
                     term {d.termNumber}, {day(d.decidedAtMs)}, by
                   </Text>
-                  <User accountId={d.decidedBy} />
+                  {/* Covenant erases a closed account's id, as Atlassian's personal data reporting asks. */}
+                  {d.decidedBy === 'erased' ? <Text size="small">a former user</Text> : <User accountId={d.decidedBy} />}
                 </Inline>
                 <Text>{d.rationale}</Text>
               </Stack>

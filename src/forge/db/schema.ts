@@ -183,6 +183,17 @@ CREATE TABLE IF NOT EXISTS clause_section (
   KEY idx_clause_section_run (run_id)
 )`;
 
+/**
+ * Accounts whose ids Covenant stores, for Atlassian's personal data reporting API:
+ * when it first stored each one (the updatedAt it reports) and when it last reported it.
+ */
+const V011_PERSONAL_DATA_REPORT = `
+CREATE TABLE IF NOT EXISTS personal_data_report (
+  account_id VARCHAR(128) NOT NULL PRIMARY KEY,
+  stored_at_ms BIGINT NOT NULL,
+  reported_at_ms BIGINT NULL
+)`;
+
 const migrations = migrationRunner
   .enqueue('v001_create_spike_probe', V001_SPIKE_PROBE)
   .enqueue('v002_create_contract', V002_CONTRACT)
@@ -193,7 +204,8 @@ const migrations = migrationRunner
   .enqueue('v007_create_contract_state', V007_CONTRACT_STATE)
   .enqueue('v008_create_app_setting', V008_APP_SETTING)
   .enqueue('v009_create_context_cache', V009_CONTEXT_CACHE)
-  .enqueue('v010_create_clause_section', V010_CLAUSE_SECTION);
+  .enqueue('v010_create_clause_section', V010_CLAUSE_SECTION)
+  .enqueue('v011_create_personal_data_report', V011_PERSONAL_DATA_REPORT);
 
 let ready: Promise<void> | null = null;
 
