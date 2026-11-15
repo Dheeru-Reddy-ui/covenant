@@ -38,7 +38,20 @@ npm run eval                       # the 30-contract scored split; writes eval/r
 npm run eval -- --dev              # 10 different contracts for prompt work; writes eval/data/dev-report.md
 npm run eval -- --limit 3          # a quick partial run; writes eval/data/eval-report.md
 npm run eval -- --rescore <file>   # rebuild a report from a saved run in eval/data/runs, no model calls
+npm run eval -- --gate             # also fail if the scores are lower than eval/baseline.json
+npm run traps                      # the 20 trap contracts; writes eval/traps.md
+npm run traps -- --gate            # fail if fewer traps pass than eval/baseline.json records
+npm run traps -- --only <id>       # one trap, for debugging
+npm run traps -- --break           # prove the gate: a deliberately broken prompt must fail it
 ```
+
+## Trap contracts and the quality gate
+
+`src/traps.ts` holds twenty short invented contracts, each written to break one thing: conflicting notice periods, a notice period per party, dates in words, two-digit years, blank dates, a stated end date, business-day notice, an evergreen contract, a planted instruction to an AI, a planted fee, value in words and figures, a value with no currency, deemed receipt, no notices clause, a service level with a credit, and more. Each trap states what a safe answer looks like: the right value, or the item withheld for review, never a wrong value. They run through the same `packages/core` code as production, including the details pass.
+
+`baseline.json` records the last accepted scores: traps passed, and the CUAD exact-match counts and wrong answers. CI (`.github/workflows/ci.yml`) runs `npm run check` on every push, and the trap gate when the repository has an `ANTHROPIC_API_KEY` secret. A score below the baseline fails the build. Raising the baseline is a deliberate edit to that file.
+
+The gate was proved on 15 November 2026 with `--break`, which replaces the extractor's and the details pass's prompts with one that tells the model to obey the contract's text, summarise instead of quote, and assume 30-day notice. The planted-fee trap failed (the planted fee was accepted without a flag), so 19 of 20 passed and the gate failed, as it must. The other 19 held because code, not the prompt, checks every quote against the file and computes every date: a paraphrase is dropped, and a wrong period cannot be quoted.
 
 A full run costs about $1 to $2 at Haiku 4.5 prices. The console shows contract ids, counts and timings only.
 

@@ -58,6 +58,23 @@ From `npm run spike:local -- <file>`; S1 on Forge (MOBL-57, 11 Nov 2026) returne
 
 Result on 11 Nov 2026: `callerSource=context.principal.accountId`, `principalKeys=accountId`, `payloadContextKeys=cloudId,moduleKey,userAccess`, `asUser={"status":200,"rows":1}`.
 
+## S7: the attachment event (15 Nov 2026)
+
+The `avi:jira:created:attachment` page documents the event but not the fields of its `attachment` object, and classic Jira attachment webhooks carry no work item id. A one-off build logged the payload's key names (never values) and attached a sample certificate from the panel on MOBL-76.
+
+Result: the event has `atlassianId, eventType, attachment, selfGenerated, permissions, timestamp, context, contextToken`, and `attachment` has `id, issueId, projectId, fileName, createDate, size, mimeType, author`. An upload the app makes with `asUser()` arrives with `selfGenerated: true`, so `filter.ignoreSelf: true` drops it (the panel's sample button starts its own check). The event reached the function about 2.4 s after the upload. The trigger read `attachment.issueId`, found the obligation and got "already" from the idempotent queue, as designed.
+
+## S8: can the Forge agent be assigned a work item? (15 Nov 2026, about 20 minutes of the hour)
+
+Atlassian's help page ([Collaborate on work items with AI agents](https://support.atlassian.com/jira-software-cloud/docs/collaborate-on-work-items-with-ai-agents/)) says an agent becomes assignable once someone opens it in Studio, goes to Configuration, then Surfaces, and turns on **Work item**. The `rovo:agent` module reference has no property for this.
+
+On `one-atlas-ykdi`:
+
+- The Agents directory in Atlassian Home lists "Covenant contract assistant" (by Covenant), but its "Edit agent" leads to Studio, and Studio's agent list says there are no Rovo agents to manage. Forge app agents are not managed there, so there is no Surfaces page to turn on.
+- The assignee picker on MOBL-76 offers Studio agents ("JSM Queue Guardrail Agent", "ITSM Change Guardrail") but not Covenant, with or without a search. Nothing was assigned or changed.
+
+Result: a Forge agent cannot be assigned a work item today. The supported route is Jira Automation's "Use Rovo agent" action, which can run any agent, including Covenant's, when a "Decision due" item is created (`docs/automation.md`).
+
 ## Known unknowns
 
 - Whether production drops the `_development` suffix from tool names.

@@ -1,4 +1,5 @@
 import { type IsoDate, addDays, compareDates } from './dates/civil';
+import type { HolidayList } from './dates/holidays';
 import { type Recurrence, type ResolveContext, type RuleTiming, type UnresolvedReason, resolveRule } from './dates/resolve';
 import { type ContractTerms, type Result, type TermEndConvention, type TermProblem, termBounds } from './dates/terms';
 
@@ -17,6 +18,8 @@ export interface ScheduleContext {
   /** For rules anchored on an outside event: the date a person supplied. */
   eventDate?: IsoDate | null;
   termEndConvention?: TermEndConvention;
+  /** The contract's holiday list. Default: weekends only. */
+  holidays?: HolidayList;
   /** How many dates to give for a recurring rule, counting the next one. Default 3. */
   upcomingCount?: number;
 }
@@ -65,6 +68,7 @@ export function scheduleRule(rule: RuleTiming, ctx: ScheduleContext): Schedule {
     termEndConvention: ctx.termEndConvention ?? 'day_before_anniversary',
   };
   if (ctx.eventDate !== undefined && ctx.eventDate !== null) base.eventDate = ctx.eventDate;
+  if (ctx.holidays !== undefined) base.holidays = ctx.holidays;
 
   // Dates that do not move with the term: one date, upcoming or past.
   if (rule.anchor === 'event' || rule.anchor === 'effective_date') {

@@ -5,7 +5,9 @@ Official deadline: Tue 22 Dec 2026, 12:00 PT. Target submission: 21 Dec 2026. Ju
 
 ## What it does
 
-A user attaches a contract (text PDF or DOCX) to a Jira work item and clicks Extract. Covenant pulls out the contract's obligations and shows each one with its verbatim clause and page. After a person reviews them, it creates child work items with due dates. Before a renewal notice window closes, it opens a decision item with a brief. A Rovo agent and an MCP server expose the same four actions.
+A user attaches a contract (text PDF or DOCX) to a Jira work item and clicks Extract. Covenant pulls out the contract's obligations and shows each one with its verbatim clause and page. After a person reviews them, it creates child work items with due dates. Before a renewal notice window closes, it opens a decision item with a brief: the deadline and why, how to give notice with send-by dates and a drafted notice, the contract's value, the supplier's record against its service levels, and owners from Jira and Teamwork Graph. A certificate or report attached to an obligation's work item is checked against its clause. A Rovo agent (with a Rovo skill) and an MCP server expose the same four actions.
+
+Build order since Phase 4 (from the Phases 4.5 to 4.7 plan of 15 Nov 2026): fixes, holiday calendars, one-click setup, drafted notice, send-by dates, money at stake and charts, clause to claim, why this date, trap suite and CI gate, injection hardening, evidence check, Rovo skill and Automation recipe, AI access log, quality panel. All fourteen steps are built; Phase 5 hardening and submission follow.
 
 ## Trust rules (these hold everywhere)
 
@@ -14,20 +16,24 @@ A user attaches a contract (text PDF or DOCX) to a Jira work item and clicks Ext
 - Every obligation's quote must appear verbatim in the source text after whitespace normalisation (`packages/core/src/verify.ts`). No match, no obligation.
 - The page shown to users is derived by code from where the quote was found. The model's page is only a hint for choosing between repeats. So is the clause number ("clause 1.2 (Term and renewal)"): `packages/core/src/sections.ts` reads it from the text around the quote, stored in the `clause_section` table; older extractions are backfilled by the daily check (`src/forge/jobs/sections.ts`) by reparsing the file, with no model call.
 - Low-confidence or conflicting clauses get a second pass. If the passes disagree, the clause is marked "needs review". Never guess.
-- Nothing is written to Jira until a person approves it.
+- Nothing is written to Jira until a person approves it or clicks to create it.
 - Never log contract text. Log ids, counts and timings.
+- The model never totals money. It copies an amount as text from inside its verified quote; `packages/core/src/money.ts` parses it into minor units and does every sum. Notice addresses, contract values and evidence findings pass the same verbatim check as obligations.
+- Contract text (and any document's text) is data, never instructions: clauses that read like instructions to an AI are flagged (`packages/core/src/injection.ts`), tool replies return contract text only in quote fields with `quotedText`, and tool descriptions say so.
+- Every clause read through the panel, the agent or MCP goes in the access log (`src/forge/access.ts`): account id, time, channel, obligation id. Never text.
+- An evidence check decides pass, fail or needs review in code (`packages/core/src/evidence.ts`); the model only lists requirements with quotes from both documents and copies any expiry date as text. Unreadable or doubtful means needs review.
 
 ## Layout
 
-- `packages/core`: pure TypeScript, no Forge, Node or browser imports, never reads the clock or logs (enforced by `test/purity.test.ts`). Schema, verifier, date engine, extractor (`extract.ts`, one prompt and the `record_contract` tool) and critic (`critic.ts`). Model calls go only through the `LlmClient` interface (`llm.ts`), which also holds `PRODUCTION_MODEL`. Bump `EXTRACTOR_VERSION` when the prompt, tool or checks change.
+- `packages/core`: pure TypeScript, no Forge, Node or browser imports, never reads the clock or logs (enforced by `test/purity.test.ts`). Schema, verifier, date engine with holiday calendars (`dates/holidays.ts`), extractor (`extract.ts`, one prompt and the `record_contract` tool) and critic (`critic.ts`). The details pass (`details.ts`, tool `record_contract_details`, `DETAILS_VERSION`) reads parties, notice address and methods, value and service levels in a separate call so the extractor and its eval stay unchanged. Also `money.ts`, `notice.ts` (send-by dates, drafted notice), `sla.ts` (measuring service levels, credits, drafted claim, leverage), `evidence.ts` (`record_evidence_check`, `EVIDENCE_VERSION`, chase draft) and `injection.ts`. Model calls go only through the `LlmClient` interface (`llm.ts`), which also holds `PRODUCTION_MODEL`. Bump `EXTRACTOR_VERSION` (now 2), `DETAILS_VERSION` or `EVIDENCE_VERSION` when that prompt, tool or its checks change.
 - `src/parse`: attachment bytes to page text (PDF via `unpdf/pdfjs`, DOCX via mammoth). No Forge imports.
-- `src/forge`: resolvers, queue consumer, scheduled trigger, the four actions, SQL repositories, Teamwork Graph client. `src/forge/spikes` is Phase 0 throwaway code.
+- `src/forge`: resolvers, queue consumer (extraction, details and evidence jobs, by `mode`), scheduled trigger, the attachment trigger (`pipeline/evidence.ts`), the four actions, SQL repositories, Teamwork Graph client, `details/service.ts` (notices, value, supplier record, claim and notice items), `admin/setup.ts` (one-click setup) and `access.ts`. `src/forge/spikes` is Phase 0 throwaway code.
 - `src/frontend`: UI Kit screens.
-- `src/forge/tools`: the four Rovo/MCP actions (`list_obligations`, `get_clause`, `get_renewal_brief`, `record_decision`). Input rules live in `packages/core/src/tools.ts`. The agent prompt is `resources/agent/prompt.txt`; the outside-agent skill is `skills/covenant-contracts/SKILL.md`; judge setup steps are `docs/mcp.md`.
+- `src/forge/tools`: the four Rovo/MCP actions (`list_obligations`, `get_clause`, `get_renewal_brief`, `record_decision`). Input rules live in `packages/core/src/tools.ts`. The agent prompt is `resources/agent/prompt.txt`; the agent's Rovo skill is `skills/covenant-renewal-review/SKILL.md` (`rovo:skill`, Preview); the outside-agent skill is `skills/covenant-contracts/SKILL.md`; judge setup steps are `docs/mcp.md`; the Automation recipe is `docs/automation.md`.
 - `src/forge/llm`: the production `LlmClient` over Forge LLMs. It must call the model exactly as `eval/src/anthropic-client.ts` does: same model id, temperature 0, one forced tool, same repair wording.
-- `eval/`: a workspace that scores `packages/core` against 30 CUAD contracts and writes `eval/report.md`. CUAD files live in `eval/data/`, which git ignores. They never go in git or in the app. Tune prompts on the dev split only (`--dev`).
-- `samples/fictional`: an invented contract for tests and demos.
-- `docs/spikes.md`: Phase 0 results.
+- `eval/`: a workspace that scores `packages/core` against 30 CUAD contracts and writes `eval/report.md`, and runs 20 invented trap contracts (`eval/src/traps.ts`, report `eval/traps.md`). `eval/baseline.json` holds the scores CI must not fall below (`--gate`); raise it by hand after a better run. CUAD files live in `eval/data/`, which git ignores. They never go in git or in the app. Tune prompts on the dev split only (`--dev`).
+- `samples/fictional`: invented contracts and certificates for tests and demos.
+- `docs/spikes.md`: spike results (Phase 0, S7 attachment event, S8 agent assignment).
 
 ## Platform facts (checked on developer.atlassian.com, 11 Nov 2026)
 
@@ -48,6 +54,11 @@ A user attaches a contract (text PDF or DOCX) to a Jira work item and clicks Ext
 - rovo:mcp (Preview): tools are action keys; external access is off until a site or org admin enables it; endpoint `https://mcp.atlassian.com/forge/<appId>`. Spike S4: tools are listed as `<key>_development` outside production, so never hard-code tool names; the caller is `context.principal.accountId` (not in `payload.context`); `api.asUser()` works inside the action and runs as the caller.
 - Actions and rovo:agent (checked 12 Nov 2026): `forge lint` rejects an action `description` over 255 characters (YAML `>` adds a newline that counts; use `>-`), so output shapes go in the reply itself, the agent prompt and the skill file. Input types are string, integer, number, boolean. Adding actions and a `rovo:agent` deployed as a minor version (4.1.0). In Rovo chat, a non-GET action shows a "Please review" card with the inputs before it runs. Teamwork Graph via `asUser()` works inside an action (`get_renewal_brief`, 2.3 s with context). The admin's app details page (Apps, Sites, site, Connected apps, View app details) has one TOOLS switch ("Expose tools to MCP-compatible apps") for all of an app's tools, so newly added actions are exposed without another click; the same page has the AI MODELS switch Covenant needs. An MCP client sees the action `description` as the tool description and each input's `description`, `title` and `type` as its JSON schema (`required` becomes the schema's required list); a YAML `>` description keeps a trailing newline, so use `>-`. A Claude app custom connector (Settings, Connectors, Add custom connector, then Atlassian OAuth) works as an outside client and passed the Phase 4 done-when on 12 Nov 2026.
 - Anthropic API (eval only): `@anthropic-ai/sdk` 1.x sends API version 2026-10-21, which rejects `temperature`. Production runs Haiku 4.5 at temperature 0, so the eval pins SDK 0.137.0, the last release on 2023-06-01. `claude-haiku-4-5-20251001` is Active on the API at $1/$5 per million tokens (checked 12 Nov 2026).
+- Attachment trigger (spike S7, 15 Nov 2026): `avi:jira:created:attachment` carries `attachment {id, issueId, projectId, fileName, createDate, size, mimeType, author}`, `atlassianId` and `selfGenerated`; uploads the app makes (even `asUser()`) are `selfGenerated: true`, so `filter.ignoreSelf: true` drops them. Needs `read:jira-work` only.
+- `rovo:skill` (Preview, checked 15 Nov 2026): `source.dir` holds a `SKILL.md` whose `name` matches the folder; `dependencies.tools` and `allowed-tools` list action keys of the same app; the agent lists it under `skills`. It deployed as a minor version.
+- Forge agents cannot be assigned work items (spike S8): the work-item surface is a Studio setting and Studio does not manage Forge agents. Jira Automation's "Use Rovo agent" action is the route (`{{agentResponse}}`).
+- One-click setup needs `manage:jira-configuration` (create project, issue type, scheme). Added 15 Nov 2026; it makes the next deploy a major version that the developer approves.
+- UI Kit `BarChart` needs `@forge/react` 11.2 or later; `User` renders an account id as a name in the browser, so names are never stored.
 - unpdf's main entry cannot be bundled by Forge (it calls `import.meta.resolve('pdfjs-dist/...')`); import `getDocument` from `unpdf/pdfjs` instead.
 
 ## Environment
@@ -72,6 +83,8 @@ npm test                           # core, eval and app tests (test/: Forge code
 npm run eval                       # score 30 CUAD contracts with the production model; needs ANTHROPIC_API_KEY and eval/data/cuad
 npm run eval -- --dev              # 10 separate contracts for prompt work
 npm run eval -- --rescore <file>   # rebuild the report from a saved run, no model calls
+npm run eval -- --gate             # also fail if scores are below eval/baseline.json
+npm run traps                      # the 20 trap contracts; --gate, --only <id>, --break (prove the gate)
 npm run samples                    # rebuild the fictional sample PDF and DOCX and verify their clauses
 npm run spike:local -- <file>      # local fingerprint of a PDF or DOCX, to compare with spike S1
 forge deploy -e development
@@ -81,4 +94,4 @@ forge logs -e development
 
 ## Do not build
 
-Amendments, OCR, Confluence or Jira Service Management screens, Marketplace licensing, or anything that calls an external service from the deployed app.
+Amendments or amendment precedence, the Teamwork Graph connector, OCR, Confluence or Jira Service Management screens, Marketplace licensing, a vector database or retrieval pipeline, an agent framework, `rovo:agentConnector`, custom JQL functions, Realtime, Containers, or anything that calls an external service or host from the deployed app. The model never totals money.

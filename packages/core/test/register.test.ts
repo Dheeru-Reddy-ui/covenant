@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type RegisterItem, registerRows } from '../src/register';
+import { type RegisterItem, moneyAtStake, registerRows, renewalLoad } from '../src/register';
 
 type Item = RegisterItem & { id: string };
 
@@ -66,5 +66,41 @@ describe('registerRows', () => {
     );
     const flagged = rows.filter((r) => r.flags.insideNoticeWindow).map((r) => r.id);
     expect(flagged).toEqual(['notice-soon']);
+  });
+});
+
+describe('renewalLoad and moneyAtStake', () => {
+  const today = '2026-11-15';
+  const eur = (minor: number) => ({ minor, currency: 'EUR' });
+  const contracts = [
+    { deadline: '2026-12-05', autoRenew: true, yearly: eur(12_000_000) },
+    { deadline: '2027-01-04', autoRenew: true, yearly: eur(5_400_000) },
+    { deadline: '2027-02-08', autoRenew: true, yearly: null },
+    { deadline: '2027-01-20', autoRenew: false, yearly: eur(1_000_000) },
+    { deadline: '2027-06-01', autoRenew: true, yearly: { minor: 900_000, currency: 'USD' } },
+    { deadline: '2026-11-01', autoRenew: true, yearly: eur(700_000) },
+    { deadline: null, autoRenew: true, yearly: eur(100) },
+  ];
+
+  it('charts notice deadlines per month for the next twelve months, starting this month', () => {
+    const load = renewalLoad(contracts, today);
+    expect(load).toHaveLength(12);
+    expect(load[0]).toEqual({ month: '2026-11', label: 'Nov 2026', deadlines: 0, values: [] });
+    expect(load[1]).toMatchObject({ month: '2026-12', label: 'Dec 2026', deadlines: 1, values: [{ currency: 'EUR', minor: 12_000_000, count: 1 }] });
+    expect(load[2]).toMatchObject({ label: 'Jan 2027', deadlines: 2, values: [{ currency: 'EUR', minor: 6_400_000, count: 2 }] });
+    expect(load[3]).toMatchObject({ label: 'Feb 2027', deadlines: 1, values: [] });
+    expect(load[7]).toMatchObject({ label: 'Jun 2027', deadlines: 1, values: [{ currency: 'USD', minor: 900_000, count: 1 }] });
+    expect(load[11]?.label).toBe('Oct 2027');
+  });
+
+  it('totals the confirmed yearly value of contracts that renew by themselves unless notice is given in the window', () => {
+    expect(moneyAtStake(contracts, today, 90)).toEqual({
+      totals: [{ currency: 'EUR', minor: 17_400_000, count: 2 }],
+      contracts: 3,
+      // One auto-renewing contract in the window has no confirmed value.
+      unvalued: 1,
+    });
+    expect(moneyAtStake(contracts, today, 30).contracts).toBe(1);
+    expect(moneyAtStake([], today, 90)).toEqual({ totals: [], contracts: 0, unvalued: 0 });
   });
 });

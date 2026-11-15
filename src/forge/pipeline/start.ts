@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Queue } from '@forge/events';
-import { EXTRACTOR_VERSION, PRODUCTION_MODEL, SCHEMA_VERSION } from '../../../packages/core/src';
+import { EXTRACTOR_VERSION, PRODUCTION_MODEL, SCHEMA_VERSION, WEEKENDS_ONLY } from '../../../packages/core/src';
 import { sha256Hex, sniffKind } from '../../parse/document';
 import * as repo from '../db/repo';
 import { ensureSchema } from '../db/schema';
@@ -60,6 +60,7 @@ export async function startExtraction(issueId: string, attachmentId: string, acc
     termIndex: 0,
     createdBy: accountId,
     createdAtMs: now,
+    holidays: WEEKENDS_ONLY,
   });
   const contract = await repo.findContract(issue.id, sha256);
   if (contract === null) throw new Error('contract row missing after insert');

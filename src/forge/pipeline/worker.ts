@@ -17,6 +17,8 @@ import { ensureSchema } from '../db/schema';
 import { UserFacingError, loggableError, readableError } from '../errors';
 import { asApp, downloadAttachment } from '../jira';
 import { ForgeLlmClient } from '../llm/forge-llm-client';
+import { detailsJob, runDetailsPass } from './details';
+import { evidenceJob } from './evidence';
 
 /**
  * The queue consumer (timeoutSeconds 900): parse, extract, verify, resolve, persist.
@@ -48,6 +50,17 @@ export async function handler(event: AsyncEvent<ExtractionEventBody>): Promise<v
     return;
   }
   const started = Date.now();
+  // A details-only job: the obligations exist already, and only the second reading is wanted.
+  if (event.body?.mode === 'evidence' && typeof event.body.checkId === 'string') {
+    await ensureSchema();
+    await evidenceJob(event.body.checkId);
+    return;
+  }
+  if (event.body?.mode === 'details') {
+    await ensureSchema();
+    await detailsJob(runId);
+    return;
+  }
   // Before the claim nothing is lost by a retry, so a database that is not ready yet may throw and be redelivered.
   await ensureSchema();
   if (!(await repo.claimRun(runId, started))) {
@@ -110,6 +123,9 @@ async function processRun(runId: string, started: number): Promise<void> {
       `quotes=${outcome.grounding.quotesVerified}/${outcome.grounding.quotesReturned} secondPasses=${outcome.secondPasses} pages=${pages} chars=${chars} ` +
       `calls=${outcome.calls} tokens=${outcome.usage.inputTokens}/${outcome.usage.outputTokens} ${timings} persist=${Date.now() - extractedAt}`,
   );
+
+  // The second reading: parties, notices, value and service levels. It records its own failures and never fails the extraction.
+  await runDetailsPass(run, contract, parsed.source);
 }
 
 async function persist(
@@ -175,7 +191,7 @@ async function persist(
   let flagged = 0;
   for (const [ordinal, obligation] of outcome.obligations.entries()) {
     const clauseId = await saveClause('obligation', obligation.location, obligation.rule.quote);
-    const schedule = scheduleRule(obligation.rule, { terms, today, autoRenew, minTermIndex: contract.termIndex });
+    const schedule = scheduleRule(obligation.rule, { terms, today, autoRenew, minTermIndex: contract.termIndex, holidays: contract.holidays });
     if (obligation.status === 'needs_review') flagged += 1;
     await repo.insertObligation({
       id: randomUUID(),

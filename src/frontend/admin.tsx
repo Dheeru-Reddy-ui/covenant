@@ -16,10 +16,11 @@ import ForgeReconciler, {
   Strong,
   Text,
   Textfield,
+  User,
   xcss,
 } from '@forge/react';
 import React, { useCallback, useEffect, useState } from 'react';
-import type { AdminView, CheckStatus, PreflightCheck, SampleStatus } from '../shared/admin';
+import type { AdminView, CheckStatus, PreflightCheck, SampleStatus, SetupResult } from '../shared/admin';
 import type { Reply } from '../shared/panel';
 
 /** Covenant's admin page: preflight checks, the decision lead time, the daily check, and the sample workspace. */
@@ -129,11 +130,11 @@ function DailyCheck({ view, reload }: { view: AdminView; reload: () => void }) {
   const [message, setMessage] = useState<string | null>(null);
   const run = async () => {
     setRunning(true);
-    const reply = await call<{ contracts: number; due: number; opened: string[]; failed: number }>('admin.runDaily');
+    const reply = await call<{ contracts: number; due: number; decided?: number; opened: string[]; failed: number }>('admin.runDaily');
     setRunning(false);
     setMessage(
       reply.ok
-        ? `Checked ${reply.data.contracts} contracts: ${reply.data.due} with a decision due, ${reply.data.opened.length} decision items opened${reply.data.opened.length ? ` (${reply.data.opened.join(', ')})` : ''}, ${reply.data.failed} failed.`
+        ? `Checked ${reply.data.contracts} contracts: ${reply.data.due} with a decision due (${reply.data.decided ?? 0} already decided), ${reply.data.opened.length} decision items opened${reply.data.opened.length ? ` (${reply.data.opened.join(', ')})` : ''}, ${reply.data.failed} failed.`
         : reply.error,
     );
     if (reply.ok) reload();
@@ -158,6 +159,60 @@ function DailyCheck({ view, reload }: { view: AdminView; reload: () => void }) {
           </LoadingButton>
         </Inline>
         {message && <Text size="small">{message}</Text>}
+      </Stack>
+    </Box>
+  );
+}
+
+function OneClickSetup({ reload }: { reload: () => void }) {
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<SetupResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const run = async () => {
+    setRunning(true);
+    const reply = await call<SetupResult>('admin.setup');
+    setRunning(false);
+    setResult(reply.ok ? reply.data : null);
+    setError(reply.ok ? null : reply.error);
+    reload();
+  };
+  const made = (created: boolean) => (created ? 'created' : 'already there');
+  return (
+    <Box xcss={card}>
+      <Stack space="space.150">
+        <Heading size="small">One-click setup</Heading>
+        <Text>
+          For a new site. Creates a Contracts project, adds a Contract work type to it, and loads three fictional sample contracts with the work around them. It
+          looks for each of these first, so clicking it again changes nothing.
+        </Text>
+        <Inline space="space.100" alignBlock="center">
+          <LoadingButton appearance="primary" isLoading={running} onClick={() => void run()}>
+            Set up Covenant
+          </LoadingButton>
+        </Inline>
+        {error && (
+          <SectionMessage appearance="error">
+            <Text>{error}</Text>
+          </SectionMessage>
+        )}
+        {result && (
+          <SectionMessage appearance={result.changed ? 'success' : 'information'} title={result.changed ? 'Set up' : 'Nothing to change: everything was already set up'}>
+            <Text>
+              Project {result.project.name} ({result.project.key}): {made(result.project.created)}.
+            </Text>
+            {result.workType && (
+              <Text>
+                Work type {result.workType.name}: {made(result.workType.created)}.
+              </Text>
+            )}
+            <Text>
+              Sample contracts: {result.sample === 'started' ? 'loading now; progress shows below' : result.sample === 'loading' ? 'already loading' : 'already loaded'}.
+            </Text>
+            {result.notes.map((n) => (
+              <Text key={n}>{n}</Text>
+            ))}
+          </SectionMessage>
+        )}
       </Stack>
     </Box>
   );
@@ -242,6 +297,86 @@ function SampleWorkspace({ view, reload }: { view: AdminView; reload: () => void
   );
 }
 
+const pct = (n: number, d: number): string => (d === 0 ? 'none yet' : `${Math.round((1000 * n) / d) / 10}% (${n} of ${d})`);
+
+/** The quality panel: what the extractor scored before this version shipped, and how this site's reviewers have treated its output. */
+function Quality({ view }: { view: AdminView }) {
+  const { eval: e, traps, approvals } = view.quality;
+  return (
+    <Box xcss={card}>
+      <Stack space="space.150">
+        <Heading size="small">Quality</Heading>
+        <Text>
+          Before release, Covenant's extractor (version {e.extractorVersion}, model {e.model}) was scored on {e.contracts} real contracts from the public CUAD set on {e.on}, and on
+          20 invented trap contracts. CI fails the build if a later version passes fewer traps, and the CUAD run has the same gate.
+        </Text>
+        <Stack space="space.050">
+          <Text>
+            <Strong>Notice periods exactly right:</Strong> {pct(e.noticeExact, e.noticeTotal)}
+          </Text>
+          <Text>
+            <Strong>All four terms exactly right</Strong> (effective date, end date, renewal term, notice period): {pct(e.allExact, e.allTotal)}. The rest were withheld for a person,
+            and {e.wrong} were answered wrongly.
+          </Text>
+          <Text>
+            <Strong>Quotes found word for word in the contract:</Strong> {pct(e.quotesVerified, e.quotesReturned)}. The others were dropped before anyone saw them.
+          </Text>
+          <Text>
+            <Strong>Trap contracts handled safely:</Strong> {pct(traps.passed, traps.total)}
+          </Text>
+        </Stack>
+        <Heading size="xsmall">On this site</Heading>
+        <Stack space="space.050">
+          <Text>
+            <Strong>Approved without any edit:</Strong> {pct(approvals.unedited, approvals.approved)} of approved obligations.
+          </Text>
+          <Text>
+            {approvals.rejected} rejected and {approvals.pending} still waiting for review.
+          </Text>
+        </Stack>
+      </Stack>
+    </Box>
+  );
+}
+
+const CHANNEL: Record<'panel' | 'rovo' | 'mcp', string> = { panel: 'Panel', rovo: 'Rovo agent', mcp: 'MCP' };
+
+/** The AI access log: who read which obligation's clause, when and how. Ids only; never clause text. Admins only, like the rest of this page. */
+function AccessLog({ view }: { view: AdminView }) {
+  const { last30Days, recent, keepDays } = view.access;
+  return (
+    <Box xcss={card}>
+      <Stack space="space.150">
+        <Heading size="small">AI access log</Heading>
+        <Text>
+          Every clause read through the panel, the Rovo agent or MCP is logged with who, when, the channel and the obligation. Clause text is never logged. Repeat reads by the same
+          person within ten minutes count once, and entries are kept for {keepDays} days.
+        </Text>
+        <Text>
+          <Strong>Last 30 days:</Strong> panel {last30Days.panel}, Rovo agent {last30Days.rovo}, MCP {last30Days.mcp}.
+        </Text>
+        {recent.length === 0 ? (
+          <Text>No reads logged yet.</Text>
+        ) : (
+          <Stack space="space.075">
+            {recent.map((r) => (
+              <Inline key={`${r.accountId}-${r.channel}-${r.obligationId}-${r.atMs}`} space="space.100" alignBlock="center" shouldWrap>
+                <Text size="small">{new Date(r.atMs).toISOString().slice(0, 16).replace('T', ' ')} UTC</Text>
+                <User accountId={r.accountId} />
+                <Lozenge appearance={r.channel === 'panel' ? 'default' : 'new'}>{CHANNEL[r.channel]}</Lozenge>
+                <Text size="small">
+                  {r.action.replace(/_/g, ' ')}: {r.obligationId ? `${r.kindLabel ?? 'obligation'} ${r.obligationId.slice(0, 8)}` : 'renewal brief'}
+                  {r.issueKey ? ` on ${r.issueKey}` : ''}
+                </Text>
+              </Inline>
+            ))}
+          </Stack>
+        )}
+      </Stack>
+    </Box>
+  );
+}
+
 const App = () => {
   const [view, setView] = useState<AdminView | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -268,8 +403,11 @@ const App = () => {
   return (
     <Stack space="space.300">
       <Preflight />
+      <OneClickSetup reload={reload} />
       <SampleWorkspace view={view} reload={reload} />
       <DailyCheck view={view} reload={reload} />
+      <Quality view={view} />
+      <AccessLog view={view} />
       <Settings view={view} reload={reload} />
       <Text size="small">
         Covenant reads contracts with Forge LLMs, stores what it finds in Forge SQL, and calls no outside service. App id {view.appId}.

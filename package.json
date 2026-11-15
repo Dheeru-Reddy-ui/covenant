@@ -18,6 +18,7 @@
     "spike:local": "tsx scripts/local-extract.ts",
     "samples": "tsx scripts/make-samples.ts",
     "eval": "npm run eval --workspace @covenant/eval --",
+    "traps": "npm run traps --workspace @covenant/eval --",
     "samples:workspace": "tsx scripts/check-workspace.ts"
   },
   "dependencies": {

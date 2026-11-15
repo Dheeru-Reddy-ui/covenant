@@ -4,17 +4,24 @@ import { AnchorEventSchema, DECISION_OUTCOMES, ObligationKindSchema, OffsetSchem
 import type { Reply } from '../shared/panel';
 import { runPreflight } from './admin/preflight';
 import { startSampleWorkspace } from './admin/sample';
+import { oneClickSetup } from './admin/setup';
 import { loadAdmin, requireAdmin } from './admin/view';
-import { markRenewed, moveWorkItemDates, recordDecision, undoRenewal } from './decisions/actions';
+import { loadBundle, markRenewed, moveWorkItemDates, recordDecision, setCalendar, undoRenewal } from './decisions/actions';
+import { buildBrief } from './decisions/brief';
+import { decideDetail, noticeDraft, openClaimItem, setOurParty, setSupplierJql, supplierRecord } from './details/service';
+import { queueDetails } from './pipeline/details';
 import { todayIn } from './dates';
 import { loadContext } from './decisions/context';
-import { loggableError, readableError } from './errors';
+import { logReads } from './access';
+import { UserFacingError, loggableError, readableError } from './errors';
+import { asUser } from './jira';
+import { attachSampleCertificate, postChase, startEvidenceCheck } from './pipeline/evidence';
 import { runDailyCheck } from './jobs/daily';
 import { loadPanel } from './panel/view';
 import { startExtraction } from './pipeline/start';
 import { loadRegister } from './register/view';
 import { approveObligation, editObligation, editTerms, rejectObligation, reopenObligation } from './review/actions';
-import { setLeadDays } from './settings';
+import { getLeadDays, setLeadDays } from './settings';
 
 /**
  * Resolvers for the issue panel, the register page and the admin page. Panel
@@ -57,6 +64,8 @@ async function answer<T>(name: string, run: () => Promise<T>): Promise<Reply<T>>
 const Id = z.string().min(1).max(64);
 const ObligationPayload = z.object({ obligationId: Id });
 const ExtractPayload = z.object({ attachmentId: Id });
+const CheckPayload = z.object({ checkId: Id });
+const SampleCertificatePayload = z.object({ variant: z.enum(['valid', 'problems']) });
 const EditPayload = z.object({
   obligationId: Id,
   edit: z
@@ -75,6 +84,14 @@ const TermsPayload = z.object({ runId: Id, terms: z.unknown(), autoRenew: z.bool
 const DecisionPayload = z.object({ contractId: Id, outcome: z.enum(DECISION_OUTCOMES), rationale: z.string().max(4000) });
 const RenewPayload = z.object({ contractId: Id, fromTermIndex: z.number().int().min(0).max(1000) });
 const ContractPayload = z.object({ contractId: Id });
+const DetailDecisionPayload = z.object({ contractId: Id, detailId: Id, decision: z.enum(['pending', 'confirmed', 'rejected']) });
+const PartyPayload = z.object({ contractId: Id, label: z.string().min(1).max(120).nullable() });
+const FilterPayload = z.object({ contractId: Id, jql: z.string().max(2000) });
+const TimeZone = z.string().max(64).optional();
+const DraftPayload = z.object({ contractId: Id, kind: z.enum(['non_renewal', 'renewal']), timeZone: TimeZone });
+const ViewerContractPayload = z.object({ contractId: Id, timeZone: TimeZone });
+const ClaimPayload = z.object({ contractId: Id, detailId: Id, breachKey: z.string().min(1).max(40), timeZone: TimeZone });
+const CalendarPayload = z.object({ contractId: Id, name: z.string().max(200), text: z.string().max(20_000) });
 const ContextPayload = z.object({ contractId: Id, refresh: z.boolean() });
 const RegisterPayload = z.object({ windowDays: z.union([z.literal(30), z.literal(60), z.literal(90), z.null()]), timeZone: z.string().max(64).optional() });
 const LeadDaysPayload = z.object({ days: z.number().int() });
@@ -94,9 +111,38 @@ const resolver = new Resolver();
 const ViewerPayload = z.object({ timeZone: z.string().max(64).optional() }).optional();
 
 resolver.define('panel.load', ({ payload, context }) =>
-  answer('panel.load', () => {
-    const issueId = callerOf(context).issueId;
-    return loadPanel(issueId, todayIn(parse(ViewerPayload, payload)?.timeZone).today);
+  answer('panel.load', async () => {
+    const caller = callerOf(context);
+    const view = await loadPanel(caller.issueId, todayIn(parse(ViewerPayload, payload)?.timeZone).today);
+    // The access log: every clause the panel showed this person. Repeats within ten minutes, such as polling, are ignored.
+    await logReads(caller.accountId, 'panel', 'panel_view', [
+      ...view.contracts.flatMap((c) => (c.run?.obligations ?? []).map((o) => ({ obligationId: o.id, contractId: c.id }))),
+      ...(view.evidence ? [{ obligationId: view.evidence.obligationId, contractId: view.evidence.contractId }] : []),
+    ]);
+    return view;
+  }),
+);
+
+resolver.define('evidence.check', ({ payload, context }) =>
+  answer('evidence.check', async () => {
+    const caller = callerOf(context);
+    const result = await startEvidenceCheck(caller.issueId, parse(ExtractPayload, payload).attachmentId, { accountId: caller.accountId, source: 'panel', requester: asUser() });
+    if (result.status === 'not_an_obligation') throw new UserFacingError('This work item is not one Covenant created for an approved obligation.');
+    return result;
+  }),
+);
+
+resolver.define('evidence.attachSample', ({ payload, context }) =>
+  answer('evidence.attachSample', () => {
+    const caller = callerOf(context);
+    return attachSampleCertificate(caller.issueId, parse(SampleCertificatePayload, payload).variant, caller.accountId);
+  }),
+);
+
+resolver.define('evidence.postChase', ({ payload, context }) =>
+  answer('evidence.postChase', () => {
+    const caller = callerOf(context);
+    return postChase(caller.issueId, parse(CheckPayload, payload).checkId, caller.accountId);
   }),
 );
 
@@ -173,6 +219,79 @@ resolver.define('contract.undoRenew', ({ payload, context }) =>
   }),
 );
 
+resolver.define('contract.setCalendar', ({ payload, context }) =>
+  answer('contract.setCalendar', () => {
+    const caller = callerOf(context);
+    const { contractId, name, text } = parse(CalendarPayload, payload);
+    return setCalendar(caller.issueId, contractId, name, text, caller.accountId);
+  }),
+);
+
+// ---- issue panel: details (parties, notices, value, service levels) ----
+
+const briefOf = async (issueId: string, contractId: string, timeZone: string | undefined) => {
+  const bundle = await loadBundle(issueId, contractId);
+  const today = todayIn(timeZone).today;
+  return { bundle, today, brief: buildBrief({ ...bundle, today, leadDays: await getLeadDays() }) };
+};
+
+resolver.define('details.read', ({ payload, context }) =>
+  answer('details.read', () => queueDetails(callerOf(context).issueId, parse(ContractPayload, payload).contractId)),
+);
+
+resolver.define('details.decide', ({ payload, context }) =>
+  answer('details.decide', async () => {
+    const caller = callerOf(context);
+    const { contractId, detailId, decision } = parse(DetailDecisionPayload, payload);
+    await decideDetail(await loadBundle(caller.issueId, contractId), detailId, decision, caller.accountId);
+    return null;
+  }),
+);
+
+resolver.define('details.setParty', ({ payload, context }) =>
+  answer('details.setParty', async () => {
+    const caller = callerOf(context);
+    const { contractId, label } = parse(PartyPayload, payload);
+    await setOurParty(await loadBundle(caller.issueId, contractId), label, caller.accountId);
+    return null;
+  }),
+);
+
+resolver.define('details.setFilter', ({ payload, context }) =>
+  answer('details.setFilter', async () => {
+    const caller = callerOf(context);
+    const { contractId, jql } = parse(FilterPayload, payload);
+    return setSupplierJql(await loadBundle(caller.issueId, contractId), jql, caller.accountId);
+  }),
+);
+
+resolver.define('details.noticeDraft', ({ payload, context }) =>
+  answer('details.noticeDraft', async () => {
+    const caller = callerOf(context);
+    const { contractId, kind, timeZone } = parse(DraftPayload, payload);
+    const { bundle, brief } = await briefOf(caller.issueId, contractId, timeZone);
+    return (await noticeDraft(bundle, brief, kind, bundle.contract.issueKey)).draft;
+  }),
+);
+
+resolver.define('details.supplierRecord', ({ payload, context }) =>
+  answer('details.supplierRecord', async () => {
+    const caller = callerOf(context);
+    const { contractId, timeZone } = parse(ViewerContractPayload, payload);
+    const { bundle, brief, today } = await briefOf(caller.issueId, contractId, timeZone);
+    return supplierRecord(bundle, brief, today, bundle.contract.issueKey);
+  }),
+);
+
+resolver.define('details.openClaim', ({ payload, context }) =>
+  answer('details.openClaim', async () => {
+    const caller = callerOf(context);
+    const { contractId, detailId, breachKey, timeZone } = parse(ClaimPayload, payload);
+    const { bundle, brief, today } = await briefOf(caller.issueId, contractId, timeZone);
+    return openClaimItem(bundle, brief, today, detailId, breachKey, bundle.contract.issueKey);
+  }),
+);
+
 // Teamwork Graph is read here and only here: when a person opens a brief's context, as that person.
 resolver.define('brief.context', ({ payload, context }) =>
   answer('brief.context', () => {
@@ -221,6 +340,13 @@ resolver.define('admin.runDaily', () =>
   answer('admin.runDaily', async () => {
     await requireAdmin();
     return runDailyCheck('manual');
+  }),
+);
+
+resolver.define('admin.setup', ({ context }) =>
+  answer('admin.setup', async () => {
+    await requireAdmin();
+    return oneClickSetup(accountOf(context));
   }),
 );
 

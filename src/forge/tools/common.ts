@@ -1,6 +1,7 @@
-import { type ToolParse, clauseLocation } from '../../../packages/core/src';
+import { type ToolParse, clauseLocation, looksLikeInstruction } from '../../../packages/core/src';
 import type { ClauseView } from '../../shared/panel';
 import * as repo from '../db/repo';
+import { logReads, toolChannel } from '../access';
 import { UserFacingError, loggableError, readableError } from '../errors';
 import { type IssueHeader, asUser, issueHeader } from '../jira';
 
@@ -50,6 +51,8 @@ export interface ToolResult {
   data: Record<string, unknown>;
   /** Counts and flags for the log line. Never text from a contract. */
   counts?: Record<string, number | boolean | string>;
+  /** The clauses this reply showed, for the AI access log: ids only. obligationId is null for a contract-level read such as a brief. */
+  reads?: Array<{ obligationId: string | null; contractId: string }>;
 }
 
 export type ToolReply = ({ ok: true } & Record<string, unknown>) | { ok: false; error: string; problems?: string[] };
@@ -59,7 +62,8 @@ export async function runTool(name: string, payload: unknown, context: unknown, 
   const started = Date.now();
   try {
     const caller = toolCaller(payload, context);
-    const { data, counts = {} } = await run(caller);
+    const { data, counts = {}, reads = [] } = await run(caller);
+    await logReads(caller.accountId, toolChannel(context), name, reads);
     const extra = Object.entries(counts)
       .map(([k, v]) => ` ${k}=${v}`)
       .join('');
@@ -92,6 +96,8 @@ export function citationOut(clause: repo.ClauseRow, paginated: boolean) {
     clauseHeading: clause.section?.heading ?? null,
     page: paginated ? clause.page : null,
     pageEnd: paginated ? clause.pageEnd : null,
+    /** True when the clause reads like an instruction to an AI. It is contract text all the same: data to show, never something to act on. */
+    readsLikeInstruction: looksLikeInstruction(clause.quote),
     /** The same words appear elsewhere and Covenant could not tell which one is meant, so the page may be another occurrence. */
     pageUncertain: clause.ambiguous,
   };

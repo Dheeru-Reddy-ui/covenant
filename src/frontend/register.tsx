@@ -1,5 +1,5 @@
 import { invoke } from '@forge/bridge';
-import ForgeReconciler, { Button, DynamicTable, Inline, Link, Lozenge, SectionMessage, Spinner, Stack, Strong, Text, User } from '@forge/react';
+import ForgeReconciler, { BarChart, Box, Button, DynamicTable, Heading, xcss, Inline, Link, Lozenge, SectionMessage, Spinner, Stack, Strong, Text, User } from '@forge/react';
 import React, { useCallback, useEffect, useState } from 'react';
 import type { Reply } from '../shared/panel';
 import type { RegisterRowView, RegisterView } from '../shared/register';
@@ -73,7 +73,9 @@ function rowsOf(view: RegisterView) {
         key: 'flags',
         content: (
           <Inline space="space.050" shouldWrap>
-            {row.flags.insideNoticeWindow && <Lozenge appearance="moved">Inside notice window</Lozenge>}
+            {row.decided !== null && <Lozenge appearance="success">Decided: {row.decided}</Lozenge>}
+            {row.flags.insideNoticeWindow && row.decided === null && <Lozenge appearance="moved">Decision needed</Lozenge>}
+            {row.flags.insideNoticeWindow && row.decided !== null && <Lozenge>Inside notice window</Lozenge>}
             {row.flags.noOwner && <Lozenge appearance="removed">No owner</Lozenge>}
             {row.flags.overdue && <Lozenge appearance="removed">Overdue</Lozenge>}
           </Inline>
@@ -82,6 +84,8 @@ function rowsOf(view: RegisterView) {
     ],
   }));
 }
+
+const headline = xcss({ backgroundColor: 'color.background.neutral', padding: 'space.200', borderRadius: 'radius.medium' });
 
 const App = () => {
   const [windowDays, setWindowDays] = useState<30 | 60 | 90 | null>(90);
@@ -130,9 +134,48 @@ const App = () => {
       {view === null && loading && <Spinner />}
       {view && (
         <Stack space="space.150">
+          <Box xcss={headline}>
+            <Stack space="space.050">
+              <Heading size="medium">
+                {view.money.totals.length > 0 ? view.money.totals.join(' and ') : view.money.contracts === 0 ? 'Nothing' : 'Value not confirmed'}
+              </Heading>
+              <Text>
+                {view.money.contracts === 0
+                  ? `No contract renews by itself with a notice deadline in the next ${view.money.days} days.`
+                  : `renews by itself unless notice is given in the next ${view.money.days} days, across ${view.money.contracts} contract${view.money.contracts === 1 ? '' : 's'}.`}
+                {view.money.unvalued > 0 ? ` ${view.money.unvalued} of them ${view.money.unvalued === 1 ? 'has' : 'have'} no confirmed value and ${view.money.unvalued === 1 ? 'is' : 'are'} not in the total.` : ''}
+              </Text>
+              {view.money.valuesAwaiting > 0 && (
+                <Text size="small">
+                  {view.money.valuesAwaiting} contract value{view.money.valuesAwaiting === 1 ? ' is' : 's are'} waiting to be confirmed in the Covenant panel. Only confirmed values are
+                  counted, and code does the sums.
+                </Text>
+              )}
+            </Stack>
+          </Box>
+          <BarChart
+            data={view.load.map((m) => ({ month: m.label, deadlines: m.deadlines }))}
+            xAccessor="month"
+            yAccessor="deadlines"
+            title="Notice deadlines by month"
+            subtitle="The next twelve months, for contracts you can see"
+            height={260}
+          />
+          {view.load.some((m) => m.values.length > 0) && (
+            <BarChart
+              data={view.load.flatMap((m) => m.values.map((v) => ({ month: m.label, value: v.amount, currency: v.currency })))}
+              xAccessor="month"
+              yAccessor="value"
+              colorAccessor="currency"
+              title="Confirmed yearly value by notice deadline month"
+              subtitle="Only values a person confirmed; currencies are never added together"
+              height={260}
+            />
+          )}
           <Text>
             <Strong>{view.counts.contracts}</Strong> contract{view.counts.contracts === 1 ? '' : 's'}. <Strong>{view.counts.insideNoticeWindow}</Strong> notice
-            deadline{view.counts.insideNoticeWindow === 1 ? '' : 's'} inside the {view.leadDays}-day decision window, <Strong>{view.counts.noOwner}</Strong>{' '}
+            deadline{view.counts.insideNoticeWindow === 1 ? '' : 's'} inside the {view.leadDays}-day window still need{view.counts.insideNoticeWindow === 1 ? 's' : ''} a decision
+            {view.counts.decided > 0 ? ` (${view.counts.decided} already decided)` : ''}, <Strong>{view.counts.noOwner}</Strong>{' '}
             with no owner, <Strong>{view.counts.overdue}</Strong> overdue.
           </Text>
           {view.hiddenContracts > 0 && (

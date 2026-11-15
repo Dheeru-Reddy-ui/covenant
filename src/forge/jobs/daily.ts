@@ -1,4 +1,4 @@
-import { describeTiming, draftDecisionItem } from '../../../packages/core/src';
+import { decisionForTerm, describeTiming, draftDecisionItem } from '../../../packages/core/src';
 import { dueDateOf, scheduleFor, todayUtc } from '../dates';
 import * as repo from '../db/repo';
 import { ensureSchema } from '../db/schema';
@@ -24,6 +24,8 @@ export interface DailySummary {
   source: 'schedule' | 'manual';
   contracts: number;
   due: number;
+  /** Due, but a decision is already recorded for the term, so no item is opened. */
+  decided: number;
   opened: string[];
   failed: number;
   ms: number;
@@ -41,8 +43,9 @@ export async function runDailyCheck(source: DailySummary['source']): Promise<Dai
   const obligations = await repo.listObligationsForRuns(runIds);
   const clauses = new Map((await repo.listClausesForRuns(runIds)).map((c) => [c.id, c]));
   const states = await repo.listContractStates(runs.map((r) => r.contractId));
+  const decisions = await repo.listDecisionsForContracts(runs.map((r) => r.contractId));
 
-  const summary: DailySummary = { atMs: started, source, contracts: 0, due: 0, opened: [], failed: 0, ms: 0 };
+  const summary: DailySummary = { atMs: started, source, contracts: 0, due: 0, decided: 0, opened: [], failed: 0, ms: 0 };
   for (const run of runs) {
     const contract = contracts.get(run.contractId);
     if (contract === undefined) continue;
@@ -62,6 +65,11 @@ export async function runDailyCheck(source: DailySummary['source']): Promise<Dai
     summary.due += 1;
 
     const termIndex = win.termIndex ?? contract.termIndex;
+    // A decision already recorded for this term means nobody needs prompting.
+    if (decisionForTerm(decisions.filter((d) => d.contractId === contract.id), termIndex) !== null) {
+      summary.decided += 1;
+      continue;
+    }
     const state = states.get(contract.id);
     if (state?.decisionItemTerm === termIndex && state.decisionItemKey !== null) continue;
     if (!(await repo.claimDecisionItem(contract.id, termIndex, now, now - STALE_CLAIM_MS))) continue;
@@ -90,6 +98,7 @@ export async function runDailyCheck(source: DailySummary['source']): Promise<Dai
         dueDate: draft.dueDate,
       });
       await repo.setDecisionItemKey(contract.id, termIndex, created.key);
+      await repo.recordCreatedItem(created.key, contract.id, 'decision', Date.now());
       summary.opened.push(created.key);
       console.log(`daily decision item opened contract=${contract.id} term=${termIndex} workItem=${created.key} daysLeft=${win.daysLeft}`);
     } catch (error) {
@@ -107,7 +116,7 @@ export async function runDailyCheck(source: DailySummary['source']): Promise<Dai
   summary.ms = Date.now() - started;
   await putJson(DAILY_LAST_RUN, summary, null);
   console.log(
-    `daily check ${source} contracts=${summary.contracts} due=${summary.due} opened=${summary.opened.length} failed=${summary.failed} ms=${summary.ms}`,
+    `daily check ${source} contracts=${summary.contracts} due=${summary.due} decided=${summary.decided} opened=${summary.opened.length} failed=${summary.failed} ms=${summary.ms}`,
   );
   return summary;
 }

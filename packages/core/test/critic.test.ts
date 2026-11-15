@@ -59,6 +59,18 @@ describe('critic: second readings of doubtful obligations', () => {
     ]);
   });
 
+  it('keeps a conflict between two clauses standing when the second reading borrows the other clause\'s deadline', async () => {
+    // In a short contract the second reader's context holds both clauses, so it can answer 60 days for the 90-day clause.
+    const ninety = noticeRule({ responsibleParty: 'Either party' });
+    const sixty = noticeRule({ responsibleParty: 'Either party', quote: QUOTES.notice60, offset: { count: 60, unit: 'day', direction: 'before' } });
+    const llm = scripted(reading({ obligations: [ninety, sixty] }), () => sixty);
+    const out = succeeded(await extractContract(CONTRACT, llm));
+    expect(out.obligations.map((o) => [o.status, o.review.map((r) => r.reason)])).toEqual([
+      ['needs_review', ['passes_disagree']],
+      ['needs_review', ['conflicting_clauses']],
+    ]);
+  });
+
   it('settles a conflict that came from a misreading', async () => {
     // The first pass read clause 2.2 twice, once wrongly as 60 days.
     const right = noticeRule();

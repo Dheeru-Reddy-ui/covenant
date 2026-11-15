@@ -1,33 +1,11 @@
 import { invoke } from '@forge/bridge';
-import ForgeReconciler, {
-  Box,
-  Button,
-  Heading,
-  Inline,
-  Link,
-  LoadingButton,
-  Lozenge,
-  ModalTransition,
-  SectionMessage,
-  Spinner,
-  Stack,
-  Strong,
-  Text,
-  xcss,
-} from '@forge/react';
+import ForgeReconciler, { Box, Button, Heading, Inline, Link, LoadingButton, Lozenge, ModalTransition, SectionMessage, Spinner, Stack, Strong, Text, xcss } from '@forge/react';
 import React, { useCallback, useEffect, useState } from 'react';
-import type {
-  ApproveReply,
-  ContractView,
-  FactView,
-  ObligationView,
-  PanelView,
-  Reply,
-  RunStatusView,
-  RunView,
-  StartReply,
-} from '../shared/panel';
+import type { ApproveReply, ContractView, FactView, ObligationView, PanelView, Reply, RunStatusView, RunView, StartReply } from '../shared/panel';
 import { type RunAction, RenewalBrief } from './brief';
+import { HolidayCalendar } from './calendar';
+import { DetailsSection } from './details';
+import { EvidenceSection } from './evidence';
 import { EditObligationModal, EditTermsModal } from './forms';
 
 /**
@@ -37,8 +15,18 @@ import { EditObligationModal, EditTermsModal } from './forms';
 
 const POLL_MS = 3000;
 
-const card = xcss({ borderColor: 'color.border', borderWidth: 'border.width', borderStyle: 'solid', borderRadius: 'radius.medium', padding: 'space.200' });
-const quoteBox = xcss({ backgroundColor: 'color.background.neutral', padding: 'space.100', borderRadius: 'radius.medium' });
+const card = xcss({
+  borderColor: 'color.border',
+  borderWidth: 'border.width',
+  borderStyle: 'solid',
+  borderRadius: 'radius.medium',
+  padding: 'space.200',
+});
+const quoteBox = xcss({
+  backgroundColor: 'color.background.neutral',
+  padding: 'space.100',
+  borderRadius: 'radius.medium',
+});
 
 type LozengeAppearance = 'default' | 'inprogress' | 'moved' | 'new' | 'removed' | 'success';
 
@@ -77,7 +65,10 @@ async function call<T>(key: string, payload?: Record<string, unknown>): Promise<
   try {
     return (await invoke<Reply<T>>(key, payload)) as Reply<T>;
   } catch (error) {
-    return { ok: false, error: `Covenant did not answer: ${error instanceof Error ? error.message : String(error)}` };
+    return {
+      ok: false,
+      error: `Covenant did not answer: ${error instanceof Error ? error.message : String(error)}`,
+    };
   }
 }
 
@@ -95,8 +86,16 @@ function Quote({ clause }: { clause: NonNullable<ObligationView['clause']> }) {
   );
 }
 
+const whyBox = xcss({
+  backgroundColor: 'color.background.neutral',
+  padding: 'space.100',
+  borderRadius: 'radius.medium',
+  width: '100%',
+});
+
 function DueLine({ item }: { item: ObligationView }) {
   const s = item.schedule;
+  const [why, setWhy] = useState(false);
   if (s.status === 'undated') {
     return (
       <Text>
@@ -111,6 +110,24 @@ function DueLine({ item }: { item: ObligationView }) {
         {s.later.length > 0 ? `, then ${s.later.join(', ')}` : ''}
       </Text>
       {s.status === 'past' && <Lozenge appearance="removed">Passed</Lozenge>}
+      <Button appearance="subtle" spacing="compact" onClick={() => setWhy(!why)}>
+        {why ? 'Hide the working' : 'Why this date'}
+      </Button>
+      {why && (
+        <Box xcss={whyBox}>
+          <Stack space="space.050">
+            <Text size="small">
+              <Strong>Rule from the clause:</Strong> {item.timing}
+            </Text>
+            {s.trace.map((step, i) => (
+              <Text key={`${i}-${step}`} size="small">
+                {i + 1}. {step}
+              </Text>
+            ))}
+            <Text size="small">Code worked this out from the rule and the contract terms. The model read the clause and did not compute the date.</Text>
+          </Stack>
+        </Box>
+      )}
     </Inline>
   );
 }
@@ -145,6 +162,14 @@ function ObligationCard({ item, actions }: { item: ObligationView; actions: Obli
           <Strong>Who:</Strong> {item.party}. <Strong>When:</Strong> {item.timing}.
         </Text>
         <DueLine item={item} />
+        {item.instructionSigns.length > 0 && (
+          <SectionMessage appearance="warning" title="This clause reads like an instruction to an AI">
+            <Text>
+              It {item.instructionSigns.join(', and ')}. Covenant treats contract text as text to quote, never as instructions, and did not act on it. Check why the clause is in
+              the contract before approving anything based on it.
+            </Text>
+          </SectionMessage>
+        )}
         {item.needsReview && (
           <SectionMessage appearance="warning" title="Check this before approving">
             {item.review.map((line) => (
@@ -174,12 +199,7 @@ function ObligationCard({ item, actions }: { item: ObligationView; actions: Obli
         )}
         {waiting && (
           <Inline space="space.100">
-            <LoadingButton
-              appearance="primary"
-              isLoading={busy}
-              isDisabled={!item.canApprove || (actions.busy !== null && !busy)}
-              onClick={() => actions.approve(item)}
-            >
+            <LoadingButton appearance="primary" isLoading={busy} isDisabled={!item.canApprove || (actions.busy !== null && !busy)} onClick={() => actions.approve(item)}>
               Approve and create work item
             </LoadingButton>
             <Button isDisabled={actions.busy !== null} onClick={() => actions.edit(item)}>
@@ -228,8 +248,8 @@ function Facts({ run, onEdit }: { run: RunView; onEdit: () => void }) {
         })}
         {run.terms?.currentTerm && (
           <Text size="small">
-            Current term {run.terms.currentTerm.number}: {run.terms.currentTerm.start} to {run.terms.currentTerm.end}. A term ends the day before
-            its anniversary, which puts every notice deadline a day early rather than a day late.
+            Current term {run.terms.currentTerm.number}: {run.terms.currentTerm.start} to {run.terms.currentTerm.end}. A term ends the day before its anniversary, which puts every
+            notice deadline a day early rather than a day late.
           </Text>
         )}
       </Stack>
@@ -290,13 +310,15 @@ function RunPanel({
       {(run.status === 'needs_review' || run.status === 'approved') && (
         <Stack space="space.200">
           <Text size="small">
-            Read {run.pages ?? '?'} pages{took !== null ? ` in ${seconds(took)}` : ''} with {run.model}: {run.llmCalls} model {run.llmCalls === 1 ? 'call' : 'calls'},{' '}
-            {run.inputTokens.toLocaleString('en')} input and {run.outputTokens.toLocaleString('en')} output tokens. {run.quotesVerified} of{' '}
-            {run.quotesReturned} quotes were found word for word in the contract
+            Read {run.pages ?? '?'} pages
+            {took !== null ? ` in ${seconds(took)}` : ''} with {run.model}: {run.llmCalls} model {run.llmCalls === 1 ? 'call' : 'calls'}, {run.inputTokens.toLocaleString('en')}{' '}
+            input and {run.outputTokens.toLocaleString('en')} output tokens. {run.quotesVerified} of {run.quotesReturned} quotes were found word for word in the contract
             {run.rejectedCount > 0 ? `; ${run.rejectedCount} items without a matching quote were dropped` : ''}.
           </Text>
           {run.brief && <RenewalBrief contractId={contract.id} termIndex={contract.termIndex} brief={run.brief} busy={actions.busy !== null} run={runAction} />}
           <Facts run={run} onEdit={onEditTerms} />
+          <HolidayCalendar contractId={contract.id} calendar={contract.calendar} run={runAction} />
+          {run.brief && run.details && <DetailsSection contractId={contract.id} details={run.details} brief={run.brief} run={runAction} busy={actions.busy !== null} />}
           <Heading size="xsmall">
             {run.counts.total === 0
               ? 'No dated obligations were found'
@@ -314,14 +336,19 @@ function RunPanel({
 const App = () => {
   const [view, setView] = useState<PanelView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<{ kind: 'info' | 'error'; text: string } | null>(null);
+  const [notice, setNotice] = useState<{
+    kind: 'info' | 'error';
+    text: string;
+  } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [editing, setEditing] = useState<ObligationView | null>(null);
   const [editingTerms, setEditingTerms] = useState<RunView | null>(null);
 
   const load = useCallback(async () => {
-    const reply = await call<PanelView>('panel.load', { timeZone: browserTimeZone() });
+    const reply = await call<PanelView>('panel.load', {
+      timeZone: browserTimeZone(),
+    });
     if (reply.ok) {
       setView(reply.data);
       setLoadError(null);
@@ -332,7 +359,10 @@ const App = () => {
     void load();
   }, [load]);
 
-  const active = view?.contracts.some((c) => c.run?.status === 'queued' || c.run?.status === 'running') ?? false;
+  const working = (s: string | undefined) => s === 'queued' || s === 'running';
+  const active =
+    (view?.contracts.some((c) => working(c.run?.status) || working(c.run?.details?.status)) ?? false) ||
+    (view?.evidence?.attachments.some((a) => working(a.check?.status)) ?? false);
   useEffect(() => {
     if (!active) return undefined;
     const timer = setTimeout(() => void load(), POLL_MS);
@@ -350,7 +380,10 @@ const App = () => {
     }
     setSelected(reply.data.contractId);
     if (reply.data.outcome === 'existing') {
-      setNotice({ kind: 'info', text: 'Covenant has already read this file with the current extractor, so nothing new was created.' });
+      setNotice({
+        kind: 'info',
+        text: 'Covenant has already read this file with the current extractor, so nothing new was created.',
+      });
     }
     await load();
   };
@@ -419,44 +452,48 @@ const App = () => {
         </SectionMessage>
       )}
 
-      <Stack space="space.100">
-        <Heading size="xsmall">Contract files on {view.issueKey}</Heading>
-        {supported.length === 0 && (
-          <Text>
-            Attach a contract to this work item (a text PDF or a Word .docx file, up to 15 MB and about 100 pages), then click Extract.
-            {view.attachments.length > 0 ? ' The files attached here are not PDF or Word files, so Covenant cannot read them.' : ''}
-          </Text>
-        )}
-        {supported.map((a) => {
-          const contract = view.contracts.find((c) => c.id === a.contractId);
-          const status = contract?.run?.status;
-          return (
-            <Inline key={a.id} space="space.100" alignBlock="center" shouldWrap>
-              <Text>
-                {a.fileName} ({kb(a.size)})
-              </Text>
-              {status && <Lozenge appearance={RUN_LABEL[status][1]}>{RUN_LABEL[status][0]}</Lozenge>}
-              {a.tooLarge ? (
-                <Text size="small">Too large: Covenant reads files up to 15 MB.</Text>
-              ) : (
-                <LoadingButton
-                  appearance={contract ? 'subtle' : 'primary'}
-                  isLoading={busy === `extract:${a.id}`}
-                  isDisabled={busy !== null && busy !== `extract:${a.id}`}
-                  onClick={() => void extract(a.id)}
-                >
-                  Extract
-                </LoadingButton>
-              )}
-              {contract && current?.id !== contract.id && (
-                <Button appearance="subtle" onClick={() => setSelected(contract.id)}>
-                  Show
-                </Button>
-              )}
-            </Inline>
-          );
-        })}
-      </Stack>
+      {view.evidence && <EvidenceSection view={view.evidence} busy={busy} runAction={runAction} />}
+
+      {(view.evidence === null || view.contracts.length > 0) && (
+        <Stack space="space.100">
+          <Heading size="xsmall">Contract files on {view.issueKey}</Heading>
+          {supported.length === 0 && (
+            <Text>
+              Attach a contract to this work item (a text PDF or a Word .docx file, up to 15 MB and about 100 pages), then click Extract.
+              {view.attachments.length > 0 ? ' The files attached here are not PDF or Word files, so Covenant cannot read them.' : ''}
+            </Text>
+          )}
+          {supported.map((a) => {
+            const contract = view.contracts.find((c) => c.id === a.contractId);
+            const status = contract?.run?.status;
+            return (
+              <Inline key={a.id} space="space.100" alignBlock="center" shouldWrap>
+                <Text>
+                  {a.fileName} ({kb(a.size)})
+                </Text>
+                {status && <Lozenge appearance={RUN_LABEL[status][1]}>{RUN_LABEL[status][0]}</Lozenge>}
+                {a.tooLarge ? (
+                  <Text size="small">Too large: Covenant reads files up to 15 MB.</Text>
+                ) : (
+                  <LoadingButton
+                    appearance={contract ? 'subtle' : 'primary'}
+                    isLoading={busy === `extract:${a.id}`}
+                    isDisabled={busy !== null && busy !== `extract:${a.id}`}
+                    onClick={() => void extract(a.id)}
+                  >
+                    Extract
+                  </LoadingButton>
+                )}
+                {contract && current?.id !== contract.id && (
+                  <Button appearance="subtle" onClick={() => setSelected(contract.id)}>
+                    Show
+                  </Button>
+                )}
+              </Inline>
+            );
+          })}
+        </Stack>
+      )}
 
       {current?.run && (
         <RunPanel

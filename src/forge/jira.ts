@@ -262,6 +262,9 @@ export interface FoundIssue {
   assignee: Person | null;
   reporter: Person | null;
   updated: string | null;
+  created: string | null;
+  /** When the work item was resolved, or null while it is open. */
+  resolved: string | null;
 }
 
 /** accountType is "app" for app users, such as Covenant itself when it created a work item. */
@@ -283,12 +286,14 @@ interface SearchResponse {
       assignee?: { accountId: string; displayName: string; accountType?: string } | null;
       reporter?: { accountId: string; displayName: string; accountType?: string } | null;
       updated?: string;
+      created?: string;
+      resolutiondate?: string | null;
     };
   }>;
   nextPageToken?: string;
 }
 
-const SEARCH_FIELDS = ['summary', 'status', 'issuetype', 'labels', 'assignee', 'reporter', 'updated'];
+const SEARCH_FIELDS = ['summary', 'status', 'issuetype', 'labels', 'assignee', 'reporter', 'updated', 'created', 'resolutiondate'];
 
 /** JQL search, following nextPageToken up to `max` results. Runs with the caller's permissions. */
 export async function searchIssues(req: Requester, jql: string, max = 100): Promise<FoundIssue[]> {
@@ -315,6 +320,8 @@ export async function searchIssues(req: Requester, jql: string, max = 100): Prom
         assignee: f.assignee ? { accountId: f.assignee.accountId, displayName: f.assignee.displayName, accountType: f.assignee.accountType ?? 'atlassian' } : null,
         reporter: f.reporter ? { accountId: f.reporter.accountId, displayName: f.reporter.displayName, accountType: f.reporter.accountType ?? 'atlassian' } : null,
         updated: f.updated ?? null,
+        created: f.created ?? null,
+        resolved: f.resolutiondate ?? null,
       });
     }
     nextPageToken = page.nextPageToken;
@@ -395,4 +402,88 @@ export async function uploadAttachment(req: Requester, issueKey: string, fileNam
   const first = created[0];
   if (first === undefined) throw new JiraError(500, `Jira accepted the attachment for ${issueKey} but returned no attachment`);
   return String(first.id);
+}
+
+/**
+ * Moves a work item to a done status, using whichever transition its workflow
+ * offers. Returns the status it reached, or null when it was already done or
+ * the workflow offers no way there: resolving is a courtesy, never a failure.
+ */
+export async function resolveIssue(req: Requester, issueKey: string): Promise<string | null> {
+  const list = await req.requestJira(route`/rest/api/3/issue/${issueKey}/transitions`, { headers: { Accept: 'application/json' } });
+  if (!list.ok) throw await failure(list, `reading the workflow of ${issueKey}`);
+  const body = (await list.json()) as { transitions?: Array<{ id: string; name: string; to?: { name?: string; statusCategory?: { key?: string } } }> };
+  const done = (body.transitions ?? []).find((t) => t.to?.statusCategory?.key === 'done');
+  if (done === undefined) return null;
+  const response = await req.requestJira(route`/rest/api/3/issue/${issueKey}/transitions`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transition: { id: done.id } }),
+  });
+  if (!response.ok) throw await failure(response, `resolving ${issueKey}`);
+  return done.to?.name ?? done.name;
+}
+
+// ---- one-click setup: needs manage:jira-configuration, and a Jira administrator ----
+
+/** A project by id or key, or null when it does not exist or the caller cannot see it. */
+export async function getProject(req: Requester, idOrKey: string): Promise<ProjectInfo | null> {
+  const response = await req.requestJira(route`/rest/api/3/project/${idOrKey}`, { headers: { Accept: 'application/json' } });
+  if (response.status === 404 || response.status === 403) return null;
+  if (!response.ok) throw await failure(response, 'reading the project');
+  const p = (await response.json()) as { id: string; key: string; name: string };
+  return { id: String(p.id), key: p.key, name: p.name };
+}
+
+export async function createProject(req: Requester, project: { key: string; name: string; description: string; leadAccountId: string }): Promise<ProjectInfo> {
+  const response = await req.requestJira(route`/rest/api/3/project`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      key: project.key,
+      name: project.name,
+      description: project.description,
+      leadAccountId: project.leadAccountId,
+      projectTypeKey: 'business',
+      projectTemplateKey: 'com.atlassian.jira-core-project-templates:jira-core-simplified-procurement',
+      assigneeType: 'UNASSIGNED',
+    }),
+  });
+  if (!response.ok) throw await failure(response, 'creating the project');
+  const created = (await response.json()) as { id: string | number; key: string };
+  return { id: String(created.id), key: created.key, name: project.name };
+}
+
+/** Every work type on the site the caller can see. Team-managed projects' own types carry a scope. */
+export async function listIssueTypes(req: Requester): Promise<Array<IssueTypeResponse & { scope?: unknown }>> {
+  const response = await req.requestJira(route`/rest/api/3/issuetype`, { headers: { Accept: 'application/json' } });
+  if (!response.ok) throw await failure(response, 'listing work types');
+  return (await response.json()) as Array<IssueTypeResponse & { scope?: unknown }>;
+}
+
+export async function createIssueType(req: Requester, name: string, description: string): Promise<IssueTypeResponse> {
+  const response = await req.requestJira(route`/rest/api/3/issuetype`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, description, hierarchyLevel: 0 }),
+  });
+  if (!response.ok) throw await failure(response, `creating the "${name}" work type`);
+  return (await response.json()) as IssueTypeResponse;
+}
+
+/** Makes a site-wide work type available in a company-managed project by adding it to the project's work type scheme. False when it was already there. */
+export async function addIssueTypeToProject(req: Requester, projectId: string, issueTypeId: string): Promise<boolean> {
+  if ((await projectIssueTypes(req, projectId)).some((t) => t.id === issueTypeId)) return false;
+  const found = await req.requestJira(route`/rest/api/3/issuetypescheme/project?projectId=${projectId}`, { headers: { Accept: 'application/json' } });
+  if (!found.ok) throw await failure(found, "reading the project's work type scheme");
+  const page = (await found.json()) as { values?: Array<{ issueTypeScheme?: { id?: string } }> };
+  const schemeId = page.values?.[0]?.issueTypeScheme?.id;
+  if (schemeId === undefined) throw new JiraError(400, 'this project manages its own work types, so add the Contract work type in its space settings');
+  const response = await req.requestJira(route`/rest/api/3/issuetypescheme/${schemeId}/issuetype`, {
+    method: 'PUT',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ issueTypeIds: [issueTypeId] }),
+  });
+  if (!response.ok) throw await failure(response, 'adding the work type to the project');
+  return true;
 }

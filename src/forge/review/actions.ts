@@ -91,6 +91,7 @@ export async function approveObligation(issueId: string, obligationId: string, a
     });
 
     await repo.markApproved(obligation.id, created, draft.dueDate, schedule.status, accountId, Date.now());
+    await repo.recordCreatedItem(created.key, contract.id, 'obligation', Date.now());
     await refreshRunStatus(run.id);
     console.log(
       `obligation ${obligation.id} approved run=${run.id} workItem=${created.key} type=${type.id} schedule=${schedule.status} ` +

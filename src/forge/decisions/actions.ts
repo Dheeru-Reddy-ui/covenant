@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import { type AdfDoc, depersonaliseSnapshot, parseDecisionInput, rolloverCheck } from '../../../packages/core/src';
+import { type AdfDoc, decisionFollowUp, depersonaliseSnapshot, parseDecisionInput, parseHolidayList, rolloverCheck } from '../../../packages/core/src';
 import { dueDateOf, scheduleFor, todayUtc } from '../dates';
 import * as repo from '../db/repo';
 import { ensureSchema } from '../db/schema';
 import { UserFacingError, loggableError, readableError } from '../errors';
-import { addComment, asUser, updateDueDate } from '../jira';
+import { addComment, asUser, resolveIssue, updateDueDate } from '../jira';
 import { getLeadDays } from '../settings';
 import { OUTCOME_LABELS, ROLLOVER_BLOCKED_TEXT } from '../text';
-import { buildBrief } from './brief';
+import { ensureNoticeItem } from '../details/service';
+import { buildBrief, windowFor } from './brief';
 
 /**
  * Decisions and renewals. Every action runs as the signed-in user, checks the
@@ -47,13 +48,26 @@ const paragraph = (text: string) => ({ type: 'paragraph', content: [{ type: 'tex
 const snapshotContext = (context: unknown): unknown =>
   context === null ? null : (depersonaliseSnapshot({ context }).value as { context: unknown }).context;
 
-export async function recordDecision(issueId: string, contractId: string, input: unknown, accountId: string): Promise<{ id: string; commentedOn: string | null }> {
+export interface RecordedDecision {
+  id: string;
+  commentedOn: string | null;
+  /** The "Decision due" item and the status it was moved to, when its workflow allowed it. */
+  resolved: { key: string; status: string } | null;
+  /** The "Send notice by" work item with the drafted letter, when the decision means notice must be given. */
+  noticeItem: { key: string; created: boolean } | null;
+  noticeNote: string | null;
+}
+
+export async function recordDecision(issueId: string, contractId: string, input: unknown, accountId: string): Promise<RecordedDecision> {
   const parsed = parseDecisionInput(input);
   if (!parsed.ok) throw new UserFacingError(`Not recorded: ${parsed.problems.join('; ')}`);
   const bundle = await loadBundle(issueId, contractId);
   const today = todayUtc();
   const brief = buildBrief({ ...bundle, today, leadDays: await getLeadDays() });
   const now = Date.now();
+  // The decision belongs to the term its notice deadline sits in, which is what the brief and the daily check look up.
+  const win = windowFor(bundle.run, bundle.contract, bundle.obligations, today, brief.leadDays);
+  const decisionTerm = 'termIndex' in win && win.termIndex !== null ? win.termIndex : bundle.contract.termIndex;
 
   // The snapshot is what the decision was made on: the brief as shown, and every obligation's state and date.
   const snapshot = {
@@ -86,7 +100,7 @@ export async function recordDecision(issueId: string, contractId: string, input:
     outcome: parsed.value.outcome,
     rationale: parsed.value.rationale,
     brief: snapshot,
-    termIndex: bundle.contract.termIndex,
+    termIndex: decisionTerm,
     workItemKey: bundle.state.decisionItemKey,
     decidedBy: accountId,
     decidedAtMs: now,
@@ -110,8 +124,28 @@ export async function recordDecision(issueId: string, contractId: string, input:
       console.error(`decision ${id} comment failed error=${loggableError(error)}`);
     }
   }
-  console.log(`decision ${id} recorded contract=${bundle.contract.id} outcome=${parsed.value.outcome} term=${bundle.contract.termIndex}`);
-  return { id, commentedOn };
+  // The decision is made, so the "Decision due" item is done. A workflow with no route to done leaves it open.
+  let resolved: RecordedDecision['resolved'] = null;
+  if (bundle.state.decisionItemKey !== null) {
+    try {
+      const status = await resolveIssue(asUser(), bundle.state.decisionItemKey);
+      if (status !== null) resolved = { key: bundle.state.decisionItemKey, status };
+    } catch (error) {
+      console.error(`decision ${id} resolve failed error=${loggableError(error)}`);
+    }
+  }
+  // A decision that goes against what the contract does by default needs notice: draft the letter and open the work item.
+  let noticeItem: RecordedDecision['noticeItem'] = null;
+  let noticeNote: string | null = null;
+  if (decisionFollowUp(parsed.value.outcome, { autoRenew: bundle.run.autoRenew, windowStatus: win.status }) === 'send_notice') {
+    const opened = await ensureNoticeItem(bundle, brief, parsed.value.outcome === 'renew' ? 'renewal' : 'non_renewal');
+    noticeItem = opened.key === null ? null : { key: opened.key, created: opened.created };
+    noticeNote = opened.note;
+  }
+  console.log(
+    `decision ${id} recorded contract=${bundle.contract.id} outcome=${parsed.value.outcome} term=${decisionTerm} commented=${commentedOn !== null} resolved=${resolved !== null} notice=${noticeItem !== null}`,
+  );
+  return { id, commentedOn, resolved, noticeItem, noticeNote };
 }
 
 async function refreshUndecidedSchedules(bundle: Bundle, contract: repo.ContractRow): Promise<void> {
@@ -122,6 +156,25 @@ async function refreshUndecidedSchedules(bundle: Bundle, contract: repo.Contract
     const s = scheduleFor(o.rule, bundle.run, contract, o.eventDate, today);
     await repo.saveSchedule(o.id, dueDateOf(s), s.status, now);
   }
+}
+
+/** Saves the contract's holiday list and re-dates every obligation still waiting for review. Approved work items keep their dates until a person moves them. */
+export async function setCalendar(issueId: string, contractId: string, name: string, text: string, accountId: string): Promise<{ holidays: number; moved: number }> {
+  const parsed = parseHolidayList(name, text);
+  if (!parsed.ok) throw new UserFacingError(`The holiday list was not saved: ${parsed.problems.join('; ')}.`);
+  const bundle = await loadBundle(issueId, contractId);
+  await repo.putContractSetting(bundle.contract.id, 'calendar', parsed.value, accountId, Date.now());
+  const contract = { ...bundle.contract, holidays: parsed.value };
+  const today = todayUtc();
+  let moved = 0;
+  for (const o of bundle.obligations) {
+    if (o.decision === 'rejected') continue;
+    const s = scheduleFor(o.rule, bundle.run, contract, o.eventDate, today);
+    if (dueDateOf(s) !== o.dueDate) moved += 1;
+    if (o.decision === 'pending' || o.decision === 'edited') await repo.saveSchedule(o.id, dueDateOf(s), s.status, Date.now());
+  }
+  console.log(`contract ${bundle.contract.id} calendar saved holidays=${parsed.value.holidays.length} moved=${moved}`);
+  return { holidays: parsed.value.holidays.length, moved };
 }
 
 export interface RenewResult {

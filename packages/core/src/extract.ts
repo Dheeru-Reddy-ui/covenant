@@ -32,7 +32,7 @@ import { DEFAULT_MIN_QUOTE_CHARS, type QuoteLocation, type QuoteRejection, type 
  */
 
 /** Bump whenever the prompt, the tool or the checks change. Runs are keyed on attachment hash plus this. */
-export const EXTRACTOR_VERSION = 1;
+export const EXTRACTOR_VERSION = 2;
 
 /** About 100k tokens: well inside Haiku's 200k context, with room for the answer. */
 export const DEFAULT_MAX_DOCUMENT_CHARS = 400_000;
@@ -320,6 +320,13 @@ const flag = (item: { status: FactStatus; review: ReviewNote[]; value?: unknown 
 
 const canonical = (value: unknown): string => JSON.stringify(value);
 
+/** Two quotes that overlap or touch on one page are readings of the same passage, not two clauses. */
+function samePassage(a: VerifiedLocation, b: VerifiedLocation): boolean {
+  if (a.match.pageStart !== b.match.pageStart || a.match.pageEnd !== b.match.pageEnd || a.match.pageStart !== a.match.pageEnd) return false;
+  const gap = Math.max(a.match.startOffset, b.match.startOffset) - Math.min(a.match.endOffset, b.match.endOffset);
+  return gap <= 3;
+}
+
 export async function extractContract(doc: SourceDocument, llm: LlmClient, options: ExtractOptions = {}): Promise<ExtractionOutcome> {
   const meter = new Meter(llm);
   const info = (): RunInfo => ({ model: llm.modelId, extractorVersion: EXTRACTOR_VERSION, schemaVersion: SCHEMA_VERSION, usage: meter.usage, calls: meter.calls });
@@ -422,10 +429,20 @@ export async function extractContract(doc: SourceDocument, llm: LlmClient, optio
       if (!sameTiming(obligation.rule, second.value)) flag(obligation, { reason: 'passes_disagree', detail: 'the second reading gave different timing' });
     }
     for (const group of groups) {
-      const standing = group.map((i) => obligations[i]).filter((o): o is ExtractedObligation => o !== undefined && o.status === 'ready');
+      const members = group.map((i) => obligations[i]).filter((o): o is ExtractedObligation => o !== undefined);
+      const standing = members.filter((o) => o.status === 'ready');
       const distinct = new Set(standing.map((o) => canonical([o.rule.offset, o.rule.recurrence])));
       if (distinct.size > 1) {
         for (const o of standing) flag(o, { reason: 'conflicting_clauses', detail: `${standing.length} clauses set different deadlines for this duty` });
+        continue;
+      }
+      // A second reading can "settle" a real conflict by reading the other clause in its context window.
+      // If a member the second reading overturned sits in a different passage from a standing member with a
+      // different deadline, two clauses still disagree, and precedence is a person's call.
+      const overturned = members.filter((o) => o.status !== 'ready' && o.review.some((n) => n.reason === 'passes_disagree'));
+      for (const s of standing) {
+        const rival = overturned.find((o) => !sameTiming(o.rule, s.rule) && !samePassage(o.location, s.location));
+        if (rival) flag(s, { reason: 'conflicting_clauses', detail: 'another clause sets a different deadline for this duty' });
       }
     }
 

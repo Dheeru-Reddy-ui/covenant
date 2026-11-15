@@ -194,6 +194,123 @@ CREATE TABLE IF NOT EXISTS personal_data_report (
   reported_at_ms BIGINT NULL
 )`;
 
+/** Every work item Covenant itself created, so its own items never count as related work or as evidence of ownership. */
+const V012_CREATED_ITEM = `
+CREATE TABLE IF NOT EXISTS created_item (
+  issue_key VARCHAR(64) NOT NULL PRIMARY KEY,
+  contract_id VARCHAR(36) NOT NULL,
+  kind VARCHAR(32) NOT NULL,
+  created_at_ms BIGINT NOT NULL,
+  KEY idx_created_item_contract (contract_id)
+)`;
+
+/** Per-contract settings a person chooses: the holiday calendar, the supplier filter. One row per setting. */
+const V013_CONTRACT_SETTING = `
+CREATE TABLE IF NOT EXISTS contract_setting (
+  contract_id VARCHAR(36) NOT NULL,
+  name VARCHAR(64) NOT NULL,
+  value MEDIUMTEXT NOT NULL,
+  updated_by VARCHAR(128) NULL,
+  updated_at_ms BIGINT NOT NULL,
+  PRIMARY KEY (contract_id, name)
+)`;
+
+/** One row per run of the details pass (parties, notices, value, service levels), keyed on the extraction run it reads for. */
+const V014_DETAILS_RUN = `
+CREATE TABLE IF NOT EXISTS details_run (
+  run_id VARCHAR(36) NOT NULL PRIMARY KEY,
+  contract_id VARCHAR(36) NOT NULL,
+  status VARCHAR(16) NOT NULL,
+  details_version INT NOT NULL,
+  model VARCHAR(64) NOT NULL,
+  input_tokens INT NOT NULL DEFAULT 0,
+  output_tokens INT NOT NULL DEFAULT 0,
+  calls INT NOT NULL DEFAULT 0,
+  quotes_returned INT NOT NULL DEFAULT 0,
+  quotes_verified INT NOT NULL DEFAULT 0,
+  rejected_count INT NOT NULL DEFAULT 0,
+  error VARCHAR(500) NULL,
+  queued_at_ms BIGINT NOT NULL,
+  finished_at_ms BIGINT NULL,
+  KEY idx_details_run_contract (contract_id)
+)`;
+
+/** What the details pass found. Every row carries its verbatim quote and where code found it. */
+const V015_CONTRACT_DETAIL = `
+CREATE TABLE IF NOT EXISTS contract_detail (
+  id VARCHAR(36) NOT NULL PRIMARY KEY,
+  run_id VARCHAR(36) NOT NULL,
+  contract_id VARCHAR(36) NOT NULL,
+  kind VARCHAR(24) NOT NULL,
+  ordinal INT NOT NULL,
+  data_json MEDIUMTEXT NOT NULL,
+  quote TEXT NOT NULL,
+  page INT NOT NULL,
+  page_end INT NOT NULL,
+  ambiguous TINYINT NOT NULL DEFAULT 0,
+  section_json VARCHAR(400) NULL,
+  confidence VARCHAR(8) NOT NULL,
+  status VARCHAR(16) NOT NULL,
+  review_json TEXT NOT NULL,
+  decision VARCHAR(16) NOT NULL,
+  decided_by VARCHAR(128) NULL,
+  decided_at_ms BIGINT NULL,
+  created_at_ms BIGINT NOT NULL,
+  KEY idx_contract_detail_run (run_id),
+  KEY idx_contract_detail_contract (contract_id)
+)`;
+
+/**
+ * Evidence checks: a certificate or report attached to an obligation's work
+ * item, read against the obligation's clause. One row per obligation, file and
+ * checker version. result_json holds the findings with their quotes from both
+ * documents; it is shown to people and never logged.
+ */
+const V016_EVIDENCE_CHECK = `
+CREATE TABLE IF NOT EXISTS evidence_check (
+  id VARCHAR(36) NOT NULL PRIMARY KEY,
+  obligation_id VARCHAR(36) NOT NULL,
+  contract_id VARCHAR(36) NOT NULL,
+  issue_id VARCHAR(32) NOT NULL,
+  attachment_id VARCHAR(32) NOT NULL,
+  file_name VARCHAR(255) NOT NULL,
+  source VARCHAR(16) NOT NULL,
+  status VARCHAR(16) NOT NULL,
+  verdict VARCHAR(16) NULL,
+  result_json MEDIUMTEXT NULL,
+  evidence_version INT NOT NULL,
+  model VARCHAR(64) NOT NULL,
+  input_tokens INT NOT NULL DEFAULT 0,
+  output_tokens INT NOT NULL DEFAULT 0,
+  calls INT NOT NULL DEFAULT 0,
+  error VARCHAR(500) NULL,
+  requested_by VARCHAR(128) NULL,
+  commented_by VARCHAR(128) NULL,
+  queued_at_ms BIGINT NOT NULL,
+  finished_at_ms BIGINT NULL,
+  UNIQUE KEY uq_evidence_check (obligation_id, attachment_id, evidence_version),
+  KEY idx_evidence_check_issue (issue_id)
+)`;
+
+/**
+ * The AI access log: who read which obligation's clause, when, and through
+ * which channel (the panel, the Rovo agent or MCP). Never clause text. One row
+ * per person, channel and obligation in each ten-minute bucket, so polling and
+ * repeated calls do not flood it.
+ */
+const V017_ACCESS_LOG = `
+CREATE TABLE IF NOT EXISTS access_log (
+  account_id VARCHAR(128) NOT NULL,
+  channel VARCHAR(16) NOT NULL,
+  action VARCHAR(32) NOT NULL,
+  obligation_id VARCHAR(36) NOT NULL,
+  contract_id VARCHAR(36) NOT NULL,
+  bucket BIGINT NOT NULL,
+  at_ms BIGINT NOT NULL,
+  UNIQUE KEY uq_access_log (account_id, channel, obligation_id, contract_id, bucket),
+  KEY idx_access_log_at (at_ms)
+)`;
+
 const migrations = migrationRunner
   .enqueue('v001_create_spike_probe', V001_SPIKE_PROBE)
   .enqueue('v002_create_contract', V002_CONTRACT)
@@ -205,7 +322,13 @@ const migrations = migrationRunner
   .enqueue('v008_create_app_setting', V008_APP_SETTING)
   .enqueue('v009_create_context_cache', V009_CONTEXT_CACHE)
   .enqueue('v010_create_clause_section', V010_CLAUSE_SECTION)
-  .enqueue('v011_create_personal_data_report', V011_PERSONAL_DATA_REPORT);
+  .enqueue('v011_create_personal_data_report', V011_PERSONAL_DATA_REPORT)
+  .enqueue('v012_create_created_item', V012_CREATED_ITEM)
+  .enqueue('v013_create_contract_setting', V013_CONTRACT_SETTING)
+  .enqueue('v014_create_details_run', V014_DETAILS_RUN)
+  .enqueue('v015_create_contract_detail', V015_CONTRACT_DETAIL)
+  .enqueue('v016_create_evidence_check', V016_EVIDENCE_CHECK)
+  .enqueue('v017_create_access_log', V017_ACCESS_LOG);
 
 let ready: Promise<void> | null = null;
 

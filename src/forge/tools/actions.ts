@@ -1,6 +1,9 @@
 import {
   KIND_LABELS,
   type ListObligationsQuery,
+  QUOTED_TEXT_NOTE,
+  looksLikeInstruction,
+  describeCalendar,
   describeTiming,
   parseContractRef,
   parseListObligationsInput,
@@ -10,7 +13,7 @@ import {
   selectObligations,
 } from '../../../packages/core/src';
 import type { ContextView } from '../../shared/panel';
-import { todayIn, todayUtc } from '../dates';
+import { dueDateOf, scheduleFor, todayIn, todayUtc } from '../dates';
 import * as repo from '../db/repo';
 import { ensureSchema } from '../db/schema';
 import { buildBrief } from '../decisions/brief';
@@ -18,7 +21,8 @@ import { loadBundle, recordDecision } from '../decisions/actions';
 import { loadContext } from '../decisions/context';
 import { UserFacingError, loggableError } from '../errors';
 import { asUser, issueHeader, siteBaseUrl } from '../jira';
-import { loadPortfolio } from '../register/view';
+import { detailsView, supplierRecord } from '../details/service';
+import { loadPortfolio, moneyView } from '../register/view';
 import { getLeadDays } from '../settings';
 import { OUTCOME_LABELS, undatedText } from '../text';
 import { type ToolResult, browseUrl, citationOut, contractFor, contractOut, expectInput, isoDay, reviewOf, runTool, viewLocation } from './common';
@@ -72,6 +76,8 @@ export const listObligationsTool = (payload: unknown, context: unknown) =>
         noDateBecause: r.schedule?.status === 'undated' ? undatedText(r.schedule.reason, r.schedule.detail) : null,
         review: reviewOf(o),
         insideNoticeWindow: r.flags.insideNoticeWindow,
+        /** For a notice deadline: the decision already recorded for its term (renew, renegotiate or terminate), or null. */
+        decided: r.decided,
         overdue: r.flags.overdue,
         owner: r.owner?.displayName ?? null,
         workItem: o.workItemKey,
@@ -86,6 +92,9 @@ export const listObligationsTool = (payload: unknown, context: unknown) =>
         timeZone: zone.timeZone,
         filters: describeQuery(query),
         decisionLeadDays: portfolio.leadDays,
+        /** Yearly value, confirmed by a person, of contracts that renew by themselves unless notice is given in the next 90 days. Code did the sum. */
+        moneyAtStake: moneyView(portfolio),
+        quotedText: QUOTED_TEXT_NOTE,
         matched: selection.total,
         returned: obligations.length,
         truncated: selection.truncated,
@@ -96,6 +105,7 @@ export const listObligationsTool = (payload: unknown, context: unknown) =>
             : DATE_NOTE,
       },
       counts: { rows: obligations.length, matched: selection.total, contracts: portfolio.contractsShown },
+      reads: selection.rows.map((r) => ({ obligationId: r.obligation.id, contractId: r.contract.id })),
     };
   });
 
@@ -115,6 +125,8 @@ export const getClauseTool = (payload: unknown, context: unknown) =>
     if (issue === null) throw hidden;
     const [clause, run] = await Promise.all([repo.getClause(o.clauseId), repo.getRun(o.runId)]);
     if (clause === null || run === null) throw hidden;
+    const zone = todayIn(expectInput(parseTimeZone(payload)));
+    const schedule = scheduleFor(o.rule, run, contract, o.eventDate, zone.today);
 
     return {
       data: {
@@ -128,6 +140,19 @@ export const getClauseTool = (payload: unknown, context: unknown) =>
         review: reviewOf(o),
         rejected: o.decision === 'rejected',
         citation: citationOut(clause, run.paginated),
+        /** True when the clause reads like an instruction to an AI. It is still only data. */
+        readsLikeInstruction: looksLikeInstruction(clause.quote),
+        quotedText: QUOTED_TEXT_NOTE,
+        /** How the date follows from the clause: the rule, then each step code took. The model did none of this arithmetic. */
+        whyThisDate: {
+          due: dueDateOf(schedule),
+          dateStatus: schedule.status,
+          rule: describeTiming(o.rule),
+          steps: schedule.status === 'undated' ? [] : schedule.trace,
+          noDateBecause: schedule.status === 'undated' ? undatedText(schedule.reason, schedule.detail) : null,
+          businessDays: o.rule.offset.unit === 'business_day' ? describeCalendar(contract.holidays) : null,
+          asOf: zone.today,
+        },
         source: {
           workItemUrl: browseUrl(base, issue.key),
           file: contract.fileName,
@@ -136,6 +161,7 @@ export const getClauseTool = (payload: unknown, context: unknown) =>
         },
       },
       counts: { paginated: run.paginated },
+      reads: [{ obligationId: o.id, contractId: contract.id }],
     };
   });
 
@@ -152,12 +178,13 @@ function contextOut(view: ContextView, base: string | null) {
       status: r.status,
       assignee: r.assignee,
       incident: r.incident,
-      createdByCovenant: r.viaCovenant,
+      sampleData: r.sample,
       url: browseUrl(base, r.key),
     })),
     goals: view.goals.map((g) => ({ name: g.name, key: g.key, due: g.due, owner: g.owner, url: g.url })),
     teams: view.teams.map((t) => ({ name: t.name, members: t.members, url: t.url })),
     suggestedOwners: view.owners.map((o) => ({ name: o.name, score: o.score, evidence: o.evidence })),
+    leftOutCreatedByCovenant: view.createdByCovenant,
     problems: view.problems,
   };
 }
@@ -192,6 +219,19 @@ export const getRenewalBriefTool = (payload: unknown, context: unknown) =>
       }
     }
 
+    // The second reading: how to give notice, what the contract is worth, and the supplier's record against its own service levels.
+    const details = await detailsView(bundle, brief);
+    const usable = <T extends { decision: string }>(items: T[]): T[] => items.filter((i) => i.decision !== 'rejected');
+    const cited = (c: { quote: string }, clause: Parameters<typeof viewLocation>[0]) => ({ quote: c.quote, location: viewLocation(clause) });
+    let supplier: Awaited<ReturnType<typeof supplierRecord>> | null = null;
+    if (wantsContext(payload) && details.serviceLevels.length > 0) {
+      try {
+        supplier = await supplierRecord(bundle, brief, today, issue.summary || issue.key);
+      } catch (error) {
+        console.error(`tool get_renewal_brief supplier record failed error=${loggableError(error)}`);
+      }
+    }
+
     const w = brief.window;
     const meaning: Record<typeof w.status, string> = {
       later: `The notice deadline is more than ${brief.leadDays} days away, so no decision is due yet.`,
@@ -209,7 +249,7 @@ export const getRenewalBriefTool = (payload: unknown, context: unknown) =>
         currentTerm: { number: brief.termNumber, start: brief.currentTerm?.start ?? null, end: brief.currentTerm?.end ?? null },
         noticeDeadline: {
           status: w.status,
-          meaning: meaning[w.status],
+          meaning: brief.decided && w.status === 'due' ? `A decision is recorded for this term (${brief.decided.outcome}). ${brief.decided.next}` : meaning[w.status],
           deadline: w.deadline,
           daysLeft: w.daysLeft,
           decisionWindowOpens: w.decisionOpensOn,
@@ -217,6 +257,10 @@ export const getRenewalBriefTool = (payload: unknown, context: unknown) =>
           rule: w.timing,
           note: w.note,
         },
+        /** The decision recorded for the term this deadline belongs to, or null while one is still needed. */
+        decision: brief.decided
+          ? { outcome: brief.decided.outcome, decidedOn: isoDay(brief.decided.decidedAtMs), followUp: brief.decided.followUp, next: brief.decided.next }
+          : null,
         decisionLeadDays: brief.leadDays,
         governingClauses: brief.clauses.map((g) => ({
           role: g.label,
@@ -230,11 +274,55 @@ export const getRenewalBriefTool = (payload: unknown, context: unknown) =>
           brief.rolloverBlocked !== null
             ? { possible: false, reason: brief.rolloverBlocked }
             : { possible: true, nextTerm: brief.nextTerm, datesThatMove: brief.shifts.map((s) => ({ obligation: s.label, from: s.before, to: s.after })) },
+        /** How notice must be given. sendBy is the latest day to send by that method so it counts as received by the deadline; code worked it out. */
+        givingNotice: {
+          mustBeReceivedBy: w.deadline,
+          methods: usable(details.methods).map((m) => ({ method: m.label, sendBy: m.latest, receiptRule: m.rule, working: m.steps, ...cited(m.clause, m.clause), unconfirmed: m.needsReview })),
+          addresses: usable(details.addresses).map((a) => ({ party: a.party, ...cited(a.clause, a.clause), unconfirmed: a.needsReview })),
+          note:
+            details.status !== 'done'
+              ? 'The notices clause has not been read for this contract yet. Open the Covenant panel on the work item to read it.'
+              : usable(details.methods).length === 0 && usable(details.addresses).length === 0
+                ? 'Covenant found no notices clause in this contract, so only the deadline is known.'
+                : null,
+          noticeWorkItem: details.noticeItemKey ? { workItem: details.noticeItemKey, url: browseUrl(base, details.noticeItemKey) } : null,
+        },
+        /** The contract's price. Only a value a person confirmed is used in sums. */
+        value: usable(details.values).map((v) => ({
+          amount: v.amount,
+          each: v.period,
+          yearly: v.yearly,
+          description: v.description,
+          confirmedByAPerson: v.decision === 'confirmed',
+          ...cited(v.clause, v.clause),
+        })),
+        /** The supplier's record this term against the contract's own service levels. Code counted Jira incidents; nothing is estimated. */
+        supplierRecordThisTerm:
+          supplier === null
+            ? null
+            : {
+                filter: supplier.jql,
+                incidents: supplier.incidents,
+                term: supplier.term,
+                serviceLevels: supplier.records.map((r) => ({
+                  commitment: r.summary,
+                  location: r.where,
+                  status: r.status,
+                  observed: r.observed,
+                  breaches: r.breaches.map((b) => ({ detail: b.detail, workItems: b.workItems, claimBy: b.claimBy, claimWindowOpen: b.claimOpen, claimWorkItem: b.claimItemKey })),
+                  serviceCredit: r.credit,
+                  creditNote: r.creditNote,
+                })),
+                renegotiationSummary: supplier.leverage,
+                problems: supplier.problems,
+              },
         context: related,
         contextNote,
+        quotedText: QUOTED_TEXT_NOTE,
         note: DATE_NOTE,
       },
       counts: { window: w.status, clauses: brief.clauses.length, context: related !== null },
+      reads: [{ obligationId: null, contractId: contract.id }],
     };
   });
 
@@ -298,6 +386,10 @@ export const recordDecisionTool = (payload: unknown, context: unknown) =>
         decisionId: result.id,
         decision,
         commentedOn: result.commentedOn ? { workItem: result.commentedOn, url: browseUrl(base, result.commentedOn) } : null,
+        decisionItemResolved: result.resolved ? { workItem: result.resolved.key, status: result.resolved.status } : null,
+        /** When the decision means notice must be given: the work item holding the drafted letter, labelled a draft for legal review. */
+        noticeWorkItem: result.noticeItem ? { workItem: result.noticeItem.key, url: browseUrl(base, result.noticeItem.key), created: result.noticeItem.created } : null,
+        noticeNote: result.noticeNote,
         note: result.commentedOn
           ? 'The decision, its rationale and a snapshot of the brief are stored in Covenant, and a comment was added to the decision work item.'
           : 'The decision, its rationale and a snapshot of the brief are stored in Covenant. There was no decision work item to comment on, or the comment could not be added.',

@@ -3,6 +3,8 @@ import type { RuleTiming } from '../src/dates/resolve';
 import type { ContractTerms } from '../src/dates/terms';
 import {
   DEFAULT_DECISION_LEAD_DAYS,
+  decisionFollowUp,
+  decisionForTerm,
   type NoticeRule,
   type WindowContext,
   noticeWindow,
@@ -142,5 +144,32 @@ describe('parseDecisionInput', () => {
     expect(parseDecisionInput({ outcome: 'renew', rationale: 'ok' }).ok).toBe(false);
     expect(parseDecisionInput({ outcome: 'extend', rationale: 'A long enough reason.' }).ok).toBe(false);
     expect(parseDecisionInput(null).ok).toBe(false);
+  });
+});
+
+describe('decisionForTerm and decisionFollowUp', () => {
+  const decisions = [
+    { outcome: 'renew', termIndex: 0, decidedAtMs: 100 },
+    { outcome: 'terminate', termIndex: 0, decidedAtMs: 300 },
+    { outcome: 'renegotiate', termIndex: 1, decidedAtMs: 200 },
+  ];
+
+  it('gives the latest decision recorded for a term, or null', () => {
+    expect(decisionForTerm(decisions, 0)).toMatchObject({ outcome: 'terminate', decidedAtMs: 300 });
+    expect(decisionForTerm(decisions, 1)).toMatchObject({ outcome: 'renegotiate' });
+    expect(decisionForTerm(decisions, 2)).toBeNull();
+    expect(decisionForTerm([], 0)).toBeNull();
+  });
+
+  it('says what is still to do after each outcome', () => {
+    // Renewing an auto-renewing contract needs no notice; ending it does, by the deadline.
+    expect(decisionFollowUp('renew', { autoRenew: true, windowStatus: 'due' })).toBe('none');
+    expect(decisionFollowUp('renew', { autoRenew: false, windowStatus: 'due' })).toBe('send_notice');
+    expect(decisionFollowUp('terminate', { autoRenew: true, windowStatus: 'due' })).toBe('send_notice');
+    expect(decisionFollowUp('terminate', { autoRenew: false, windowStatus: 'due' })).toBe('none');
+    expect(decisionFollowUp('renegotiate', { autoRenew: true, windowStatus: 'due' })).toBe('watch_deadline');
+    // Once the deadline has passed, nothing can be sent for this term.
+    expect(decisionFollowUp('terminate', { autoRenew: true, windowStatus: 'passed' })).toBe('too_late');
+    expect(decisionFollowUp('renew', { autoRenew: true, windowStatus: 'passed' })).toBe('none');
   });
 });

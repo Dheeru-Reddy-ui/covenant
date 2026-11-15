@@ -5,6 +5,8 @@ import {
   type NoticeWindow,
   canApprove,
   currentTermIndex,
+  decisionFollowUp,
+  decisionForTerm,
   describeSection,
   describeTiming,
   normaliseWhitespace,
@@ -16,7 +18,7 @@ import {
 import type { BriefView, ClauseView } from '../../shared/panel';
 import { scheduleFor } from '../dates';
 import type * as repo from '../db/repo';
-import { OUTCOME_LABELS, ROLLOVER_BLOCKED_TEXT, undatedText } from '../text';
+import { FOLLOW_UP_TEXT, OUTCOME_LABELS, ROLLOVER_BLOCKED_TEXT, undatedText } from '../text';
 
 /**
  * The renewal decision brief: the notice deadline and countdown, the terms,
@@ -51,6 +53,7 @@ export function windowFor(
     minTermIndex: contract.termIndex,
     today,
     leadDays,
+    holidays: contract.holidays,
   });
 }
 
@@ -121,6 +124,21 @@ export function buildBrief(input: BriefInput): BriefView {
     };
   }
 
+  // A decision recorded for the term this deadline belongs to settles "a decision is needed".
+  const decisionTerm = 'termIndex' in win && win.termIndex !== null ? win.termIndex : contract.termIndex;
+  const latest = decisionForTerm(input.decisions, decisionTerm);
+  let decided: BriefView['decided'] = null;
+  if (latest !== null) {
+    const followUp = decisionFollowUp(latest.outcome, { autoRenew: run.autoRenew, windowStatus: win.status });
+    decided = {
+      outcome: latest.outcome,
+      outcomeLabel: OUTCOME_LABELS[latest.outcome] ?? latest.outcome,
+      decidedAtMs: latest.decidedAtMs,
+      followUp,
+      next: FOLLOW_UP_TEXT[followUp].replace('{deadline}', window.deadline ?? 'the notice deadline'),
+    };
+  }
+
   let currentTerm: BriefView['currentTerm'] = null;
   let termNumber = contract.termIndex + 1;
   const index = currentTermIndex(terms, today, { autoRenew: run.autoRenew, minTermIndex: contract.termIndex });
@@ -155,7 +173,7 @@ export function buildBrief(input: BriefInput): BriefView {
   const shifts = check.ok
     ? rolloverPreview(
         live.map((o) => ({ id: o.id, rule: o.rule, eventDate: o.eventDate })),
-        { terms, autoRenew: run.autoRenew, termIndex: contract.termIndex, today },
+        { terms, autoRenew: run.autoRenew, termIndex: contract.termIndex, today, holidays: contract.holidays },
       )
         .filter((s) => s.changed)
         .map((s) => {
@@ -176,6 +194,7 @@ export function buildBrief(input: BriefInput): BriefView {
 
   return {
     window,
+    decided,
     leadDays,
     autoRenew: run.autoRenew,
     termNumber,

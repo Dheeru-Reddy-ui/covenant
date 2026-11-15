@@ -3,6 +3,9 @@
  * holds types only: the frontend bundle must not pull in server code.
  */
 
+import type { DetailsView } from './details';
+import type { EvidenceView } from './evidence';
+
 export type RunStatusView = 'queued' | 'running' | 'needs_review' | 'approved' | 'failed';
 export type DecisionView = 'pending' | 'edited' | 'approving' | 'approved' | 'rejected';
 export type FactStateView = 'ready' | 'needs_review' | 'missing' | 'edited';
@@ -86,6 +89,8 @@ export interface ObligationView {
   review: string[];
   secondReading: string | null;
   clause: ClauseView | null;
+  /** Why the clause reads like an instruction to an AI, when it does. Shown as a warning; Covenant never acts on contract text. */
+  instructionSigns: string[];
   decision: DecisionView;
   canApprove: boolean;
   eventDate: string | null;
@@ -95,6 +100,16 @@ export interface ObligationView {
 }
 
 export type WindowStatusView = 'no_notice_rule' | 'undated' | 'later' | 'due' | 'passed';
+
+/** The decision recorded for the term the notice deadline belongs to, and what is still to do about it. */
+export interface DecidedView {
+  outcome: string;
+  outcomeLabel: string;
+  decidedAtMs: number;
+  followUp: 'none' | 'send_notice' | 'watch_deadline' | 'too_late';
+  /** One plain sentence on what happens next. */
+  next: string;
+}
 
 export interface DecisionRecordView {
   id: string;
@@ -116,6 +131,8 @@ export interface BriefView {
     timing: string | null;
     note: string | null;
   };
+  /** Null until a decision is recorded for this term. A decision is "needed now" only while this is null. */
+  decided: DecidedView | null;
   leadDays: number;
   autoRenew: boolean;
   termNumber: number;
@@ -138,7 +155,9 @@ export interface BriefView {
 export interface ContextView {
   fetchedAtMs: number;
   cached: boolean;
-  related: Array<{ key: string; summary: string; type: string; status: string; assignee: string | null; incident: boolean; viaCovenant: boolean }>;
+  /** Work linked to the contract by people. Items Covenant created itself are left out and only counted. */
+  related: Array<{ key: string; summary: string; type: string; status: string; assignee: string | null; incident: boolean; sample: boolean }>;
+  createdByCovenant: number;
   goals: Array<{ name: string; key: string | null; url: string | null; due: string | null; owner: string | null }>;
   teams: Array<{ name: string; url: string | null; members: number }>;
   owners: Array<{ accountId: string; name: string | null; score: number; evidence: string[] }>;
@@ -168,6 +187,17 @@ export interface RunView {
   obligations: ObligationView[];
   counts: { total: number; waiting: number; approved: number; rejected: number };
   brief: BriefView | null;
+  /** Parties, notices, value and service levels from the second reading. Null until the run is reviewable. */
+  details: DetailsView | null;
+}
+
+/** The contract's holiday list and the business-day rule it gives, in words. */
+export interface CalendarView {
+  name: string;
+  holidays: Array<{ date: string; label: string }>;
+  rule: string;
+  /** How many of this contract's obligations are counted in business days. */
+  usedBy: number;
 }
 
 export interface ContractView {
@@ -177,6 +207,7 @@ export interface ContractView {
   /** The term a person has marked the contract renewed into. 0 is the initial term. */
   termIndex: number;
   createdAtMs: number;
+  calendar: CalendarView;
   run: RunView | null;
 }
 
@@ -186,6 +217,8 @@ export interface PanelView {
   nowMs: number;
   attachments: AttachmentView[];
   contracts: ContractView[];
+  /** On a work item Covenant created for an approved obligation: the evidence check. Null on any other work item. */
+  evidence: EvidenceView | null;
 }
 
 export type Reply<T> = { ok: true; data: T } | { ok: false; error: string };

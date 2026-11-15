@@ -109,6 +109,13 @@ export async function loadContext(issueId: string, contractId: string, accountId
   } catch (error) {
     problems.push(error instanceof JiraError ? `Jira could not list the linked work: ${error.message}.` : 'Jira could not list the linked work.');
   }
+  // What Covenant created itself (approved obligations, decision and notice items) is not evidence of who
+  // works on this contract, and is not "related work": counting it would only reflect Covenant back at itself.
+  const createdKeys = await repo.listCreatedKeys(contract.id);
+  const isOurs = (i: FoundIssue): boolean => createdKeys.has(i.key) || i.reporter?.accountType === 'app';
+  const ours = children.filter(isOurs);
+  children = children.filter((i) => !isOurs(i));
+  linked = linked.filter((i) => !createdKeys.has(i.key));
   for (const issue of [...linked, ...children]) {
     const label = `${issue.key} ${issue.summary}`.slice(0, 80);
     for (const [person, kind] of [
@@ -186,8 +193,9 @@ export async function loadContext(issueId: string, contractId: string, accountId
       status: i.status,
       assignee: i.assignee?.displayName ?? null,
       incident: isIncident(i),
-      viaCovenant: children.includes(i),
+      sample: i.labels.includes('covenant-sample'),
     })),
+    createdByCovenant: ours.length,
     goals,
     teams,
     owners: rankOwners(evidence, { exclude: [...apps], limit: 5 }).map((o) => ({ accountId: o.accountId, name: o.name, score: o.score, evidence: o.evidence })),
@@ -197,7 +205,7 @@ export async function loadContext(issueId: string, contractId: string, accountId
     console.error(`context cache write failed contract=${contract.id} error=${loggableError(e)}`);
   });
   console.log(
-    `context loaded contract=${contract.id} linked=${linked.length} children=${children.length} goals=${goals.length} teams=${teams.length} ` +
+    `context loaded contract=${contract.id} linked=${linked.length} children=${children.length} ours=${ours.length} goals=${goals.length} teams=${teams.length} ` +
       `owners=${view.owners.length} problems=${problems.length} ms=${Date.now() - started}`,
   );
   return view;

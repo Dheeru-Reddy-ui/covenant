@@ -162,3 +162,25 @@ export function locateQuote(quote: string, doc: SourceDocument, pageHint?: numbe
     match: chosen,
   };
 }
+
+/**
+ * The text around a verified quote, for a clause that leans on its neighbours
+ * ("the insurance required by this clause"). Takes up to `before` characters
+ * before the quote and `after` after it, from the quote's own pages, cut at
+ * whitespace. Null when the quote is not in the document.
+ */
+export function textAround(quote: string, doc: SourceDocument, pageHint: number | null, options: { before?: number; after?: number } = {}): string | null {
+  const location = locateQuote(quote, doc, pageHint);
+  if (location.status !== 'verified') return null;
+  const before = options.before ?? 1200;
+  const after = options.after ?? 300;
+  const start = doc.pages.find((p) => p.page === location.match.pageStart)?.text ?? '';
+  const end = doc.pages.find((p) => p.page === location.match.pageEnd)?.text ?? '';
+  const head = start.slice(Math.max(0, location.match.startOffset - before), location.match.startOffset).replace(/^\S*\s/, '');
+  const middle =
+    location.match.pageStart === location.match.pageEnd
+      ? start.slice(location.match.startOffset, location.match.endOffset)
+      : `${start.slice(location.match.startOffset)}\n${end.slice(0, location.match.endOffset)}`;
+  const tail = end.slice(location.match.endOffset, location.match.endOffset + after).replace(/\s\S*$/, '');
+  return normaliseWhitespace(`${head}${middle}${tail}`);
+}

@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    name: Type-check and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+
+  # The quality gate: the twenty trap contracts run against the production model, and the
+  # build fails when fewer pass than eval/baseline.json records. A change to the extractor's
+  # prompt, tool or checks that makes it less safe cannot merge unnoticed.
+  traps:
+    name: Trap contracts (gate)
+    runs-on: ubuntu-latest
+    needs: check
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run the trap suite against the baseline
+        if: env.ANTHROPIC_API_KEY != ''
+        run: npm run traps -- --gate
+      - name: Skipped without a key
+        if: env.ANTHROPIC_API_KEY == ''
+        run: echo "No ANTHROPIC_API_KEY secret is set, so the trap gate did not run. Add the secret in the repository settings to turn it on."

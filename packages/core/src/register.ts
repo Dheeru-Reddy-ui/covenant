@@ -1,4 +1,5 @@
-import { type IsoDate, compareDates, diffDays } from './dates/civil';
+import { type IsoDate, addMonths, compareDates, diffDays, startOfMonth, yearMonth } from './dates/civil';
+import { type CurrencyTotal, type Money, totalByCurrency } from './money';
 import type { ObligationDecision } from './review';
 
 /** The portfolio register: every obligation by due date, with the flags a contract owner scans for. */
@@ -52,4 +53,60 @@ export function registerRows<T extends RegisterItem>(items: readonly T[], option
     if (b.due === null) return -1;
     return compareDates(a.due, b.due);
   });
+}
+
+export interface ContractLoad {
+  /** The contract's next notice deadline, or null when it has none dated. */
+  deadline: IsoDate | null;
+  /** True when the contract renews by itself unless notice is given. */
+  autoRenew: boolean;
+  /** The contract's yearly value, only when a person has confirmed it. */
+  yearly: Money | null;
+}
+
+export interface LoadMonth {
+  /** YYYY-MM. */
+  month: string;
+  label: string;
+  deadlines: number;
+  values: CurrencyTotal[];
+}
+
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** Notice deadlines and confirmed value per month, from this month for `months` months. Code does the sums. */
+export function renewalLoad(contracts: readonly ContractLoad[], today: IsoDate, months = 12): LoadMonth[] {
+  const out: LoadMonth[] = [];
+  const first = startOfMonth(today);
+  for (let i = 0; i < months; i += 1) {
+    const start = addMonths(first, i);
+    const { year, month } = yearMonth(start);
+    const key = start.slice(0, 7);
+    const inMonth = contracts.filter((c) => c.deadline !== null && c.deadline.slice(0, 7) === key && compareDates(c.deadline, today) >= 0);
+    out.push({
+      month: key,
+      label: `${MONTH_NAMES[month - 1]} ${year}`,
+      deadlines: inMonth.length,
+      values: totalByCurrency(inMonth.flatMap((c) => (c.yearly ? [c.yearly] : []))),
+    });
+  }
+  return out;
+}
+
+/**
+ * Money at stake: the confirmed yearly value of contracts that will renew by
+ * themselves unless notice is given within `days`. Contracts in the window
+ * with no confirmed value are counted, never estimated.
+ */
+export function moneyAtStake(contracts: readonly ContractLoad[], today: IsoDate, days: number): { totals: CurrencyTotal[]; contracts: number; unvalued: number } {
+  const inWindow = contracts.filter((c) => {
+    if (!c.autoRenew || c.deadline === null) return false;
+    const left = diffDays(today, c.deadline);
+    return left >= 0 && left <= days;
+  });
+  return {
+    totals: totalByCurrency(inWindow.flatMap((c) => (c.yearly ? [c.yearly] : []))),
+    contracts: inWindow.length,
+    unvalued: inWindow.filter((c) => c.yearly === null).length,
+  };
 }

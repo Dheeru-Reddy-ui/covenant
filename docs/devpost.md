@@ -29,12 +29,17 @@ Attach a contract (a text PDF or Word file) to a Jira work item and click **Extr
   - the countdown and the governing clause;
   - past decisions;
   - the dates that move if the contract renews;
-  - from Teamwork Graph and Jira: related work, incidents, goals, the space's teams, and suggested owners, each with the evidence behind the suggestion.
+  - "Why this date": the rule the model read and each step code took, including the contract's holiday calendar;
+  - how to give notice: the notice address and delivery methods, quoted, with the latest send date per method from its deemed-receipt rule, and a drafted notice labelled as a draft for legal review;
+  - what is at stake: the contract's value, quoted and confirmed by a person, with code doing every sum;
+  - the supplier's record this term: the contract's own service levels measured against the supplier's incidents in Jira, breaches, credits still claimable with their claim deadline, and a drafted claim;
+  - from Teamwork Graph and Jira: related work, incidents, goals, the space's teams, and suggested owners, each with the evidence behind the suggestion. Items Covenant created itself never count as history.
 
-  Record renew, renegotiate or terminate with a rationale, and Covenant stores a snapshot of what the decision was based on. **Mark renewed** starts the next term and every dependent date moves on screen.
-- **A portfolio register** lists every obligation by due date, with 30, 60 and 90 day views and flags for "inside notice window", "no owner" and "overdue". It shows only contracts the viewer can see in Jira.
-- **The same answers in chat.** A Rovo agent and an MCP server answer questions like "which notice deadlines fall in the next 90 days?", with the clause behind every date. They can also brief a person on a renewal and record their decision, but only after the person confirms.
-- **An admin page** runs a preflight of every dependency and loads a sample workspace of three fictional contracts, so the app can be tried in minutes.
+  Record renew, renegotiate or terminate with a rationale: Covenant stores a snapshot of what the decision was based on, resolves the Decision due item, and when notice must be given opens a "Send notice by" item with the drafted letter. **Mark renewed** starts the next term and every dependent date moves on screen.
+- **Evidence on receipt.** When the supplier's insurance certificate or report is attached to the obligation's work item, Covenant checks it against the clause: the expiry covers the required period, the named party matches, and each requirement is met. It shows pass, fail or needs review with quotes from both documents, and drafts a chase message on a fail.
+- **A portfolio register** leads with the money auto-renewing in the next 90 days, charts notice deadlines and contract value by month, and lists every obligation by due date with 30, 60 and 90 day views and flags for "inside notice window", "no owner" and "overdue". It shows only contracts the viewer can see in Jira.
+- **The same answers in chat.** A Rovo agent, guided by a Rovo skill for the renewal review, and an MCP server answer questions like "which notice deadlines fall in the next 90 days?", with the clause behind every date. They can also brief a person on a renewal and record their decision, but only after the person confirms. A written Jira Automation recipe runs the agent on every new Decision due item.
+- **An admin page** runs a preflight of every dependency, sets up a Contracts project with three fictional contracts in one click, and shows a quality panel (the eval scores and the share of obligations approved unedited) and the AI access log: who read which clause, when and through which channel.
 
 ## How I built it
 
@@ -44,11 +49,12 @@ Covenant is built only on Forge, and nothing calls an external service. It is el
 | --- | --- |
 | Reading the contract | **Forge LLMs** (`llm` module, Claude Haiku 4.5) with one forced tool call, at temperature 0 |
 | Long-running extraction | **Async events** queue consumer with a 900-second timeout. The Extract button only queues the job |
-| Storage | **Forge SQL**: contracts, runs, clauses, obligations, decisions, context cache. Idempotency comes from unique keys and conditional updates, since Forge SQL has no transactions |
-| UI | **UI Kit**: `jira:issuePanel`, `jira:globalPage` (register) and `jira:adminPage` (preflight, sample workspace) |
+| Storage | **Forge SQL**: contracts, runs, clauses, obligations, decisions, contract details, evidence checks, the access log, context cache. Idempotency comes from unique keys and conditional updates, since Forge SQL has no transactions |
+| UI | **UI Kit**: `jira:issuePanel`, `jira:globalPage` (register with `BarChart`s) and `jira:adminPage` (preflight, one-click setup, quality, access log) |
 | Daily decision check | `scheduledTrigger` |
+| Evidence on receipt | `trigger` on `avi:jira:created:attachment` |
 | Context | **Teamwork Graph API**, as the signed-in user, with operation-name prefixes, full paging, backoff and errors reported per section |
-| Chat and outside agents | `rovo:agent`, four `action` modules and `rovo:mcp` |
+| Chat and outside agents | `rovo:agent`, `rovo:skill`, four `action` modules and `rovo:mcp` |
 
 The design rule is that the model reads and code decides:
 1. The extractor returns structured rules, never dates: who, what, measured from which event, by how much.
@@ -56,25 +62,30 @@ The design rule is that the model reads and code decides:
 3. A deterministic date engine turns rules into dates. It has unit and property-based tests and handles term ends, anniversaries, business days, recurrences and leap years.
 4. Code also derives the page and the clause number from where the quote sits; the model's page number is only a hint.
 5. Doubtful readings get a second pass, and when the passes disagree, the obligation is flagged for a person instead of guessed.
+6. Money is copied as text from inside a verified quote and parsed by code; the model never totals anything. Notice addresses, values and evidence findings pass the same verbatim check.
+7. Contract text is data: clauses that read like instructions to an AI are flagged, tool replies keep contract text in marked quote fields, and a test proves a planted clause is not followed.
 
 I measured it on 30 contracts from the public CUAD dataset with the production model:
 - **93.3%** of notice periods matched exactly (14/15);
-- **100%** of the values Covenant gave were right, across 58 answers on four fields; it withheld a value for review when unsure;
-- **95.5%** of the quotes the model returned were found verbatim, and the rest were dropped.
+- **100%** of the values Covenant gave were right, across 57 answers on four fields; it withheld a value for review when unsure;
+- **96.4%** of the quotes the model returned were found verbatim, and the rest were dropped.
 
-There are 410 tests: 372 for the core, 19 for the eval and 19 for the app. The app tests check that a user who cannot see a contract gets nothing from any tool, and that no log line can contain contract text.
+Twenty invented trap contracts (conflicting notice periods, dates in words, two-digit years, a planted instruction, a planted fee and more) all pass. CI fails the build if fewer traps pass than a recorded baseline, and the CUAD run has the same gate locally. To prove it, a prompt telling the model to obey the contract let the planted fee through and the build failed; everything else held, because code checks every quote and computes every date.
+
+There are 529 tests: 477 for the core, 25 for the eval and 27 for the app. The app tests check that a user who cannot see a contract gets nothing from any tool, a planted clause is not followed, every read is logged with ids only, and no log line can contain contract text.
 
 ## How it meets the Forge requirement
 
-Covenant is a Forge app (`manifest.yml`, runtime nodejs22.x) that integrates with Jira, through the issue panel, global page, admin page, work items and comments, and with Rovo and Teamwork Graph. It uses Forge LLMs, Forge SQL, async events, a scheduled trigger, UI Kit, `rovo:agent`, `action` and `rovo:mcp`. Every byte of contract text stays on the Atlassian platform.
+Covenant is a Forge app (`manifest.yml`, runtime nodejs22.x) that integrates with Jira, through the issue panel, global page, admin page, work items and comments, and with Rovo and Teamwork Graph. It uses Forge LLMs, Forge SQL, async events, a scheduled trigger, a product event trigger, UI Kit, `rovo:agent`, `rovo:skill`, `action` and `rovo:mcp`. Every byte of contract text stays on the Atlassian platform.
 
 ## Category: Apps for Business Teams
 
 Contracts belong to legal, procurement and finance, but their deadlines land on everyone. Covenant gives those teams the context to act decisively:
 - the clause in front of them;
-- the date already worked out and checked;
+- the date already worked out and checked, with the latest day to send notice;
+- what the contract is worth and what the supplier actually delivered;
 - the owner suggested from real activity;
-- the decision recorded where the work happens.
+- the decision recorded where the work happens, with the notice drafted.
 
 ## Bonus prizes
 
@@ -86,7 +97,7 @@ Contracts belong to legal, procurement and finance, but their deadlines land on 
 
 I tested it with an outside MCP client, a Claude app custom connector. Asked "which notice deadlines fall in the next 90 days?", it answered with four deadlines, each with its clause and location. `docs/mcp.md` has the admin enablement steps.
 
-**Best Agents.** The `rovo:agent` "Covenant contract assistant" has a role prompt in a resource file, four conversation starters, and the same four actions. In Rovo chat it lists deadlines with citations and chains `list_obligations` into `get_clause` for exact wording. It briefs a renewal with Teamwork Graph context, and it records a decision only after Rovo's review card and the tool's own confirmation step.
+**Best Agents.** The `rovo:agent` "Covenant contract assistant" has a role prompt in a resource file, four conversation starters, the same four actions, and a `rovo:skill` (`covenant-renewal-review`) that packages the renewal review workflow over them. In Rovo chat it lists deadlines with citations and chains `list_obligations` into `get_clause` for exact wording and "why this date". It briefs a renewal with notice send-by dates, value, the supplier's record and Teamwork Graph context, and it records a decision only after Rovo's review card and the tool's own confirmation step. `docs/automation.md` gives the Jira Automation rule that runs it on every new Decision due item. I checked whether it can be assigned a work item: Forge agents cannot be yet, so Automation is the route.
 
 **Best apps with Teamwork Graph integration.** The renewal brief reads, as the signed-in user:
 - goals linked to the contract's work item (`jiraWorkItemGoals`);
@@ -104,7 +115,7 @@ Owner suggestions rank people by assignee, commenter, goal-owner and team eviden
 
 ## Accomplishments that I'm proud of
 
-- In the measured run, every value Covenant gave was right (58/58), because it withholds a value instead of guessing.
+- In the measured run, every value Covenant gave was right (57/57), because it withholds a value instead of guessing.
 - A judge can install it and see a full portfolio in minutes, from the sample workspace.
 - The same trust rules hold in the panel, the Rovo agent, an outside MCP client and the skill file.
 
@@ -115,18 +126,19 @@ Owner suggestions rank people by assignee, commenter, goal-owner and team eviden
 
 ## What's next for Covenant
 
-- Linking amendments to the agreements they amend.
-- Jira Service Management request intake for new contracts.
-- A Marketplace listing.
+- Linking amendments to the agreements they amend (cut from this version to make room for the decision and evidence work).
+- A Teamwork Graph connector for outside contract systems.
+- Assigning work items to the agent, once Forge agents support it.
+- Jira Service Management request intake for new contracts, and a Marketplace listing.
 
 ## Built with
 
-Atlassian Forge, Forge LLMs (Claude Haiku 4.5), Forge SQL, async events, UI Kit, Rovo (`rovo:agent`, `rovo:mcp`, `action`), Teamwork Graph API, Jira REST API, TypeScript, zod, unpdf (PDF.js), mammoth, vitest and fast-check.
+Atlassian Forge, Forge LLMs (Claude Haiku 4.5), Forge SQL, async events, UI Kit, Rovo (`rovo:agent`, `rovo:skill`, `rovo:mcp`, `action`), Teamwork Graph API, Jira REST API, Jira Automation, TypeScript, zod, unpdf (PDF.js), mammoth, docx, vitest and fast-check.
 
 ## Testing instructions
 
 [Paste the "Install and try it" section of the README here, and add:]
 
 - You need to be a site admin to install. Rovo is optional. An organization admin is needed only to expose the MCP tools to outside clients.
-- The sample workspace needs one Jira project you can create work items in. Any template works.
+- One-click setup creates its own Contracts project, so it works on an empty site. The sample workspace instead needs one Jira project you can create work items in.
 - Model usage is billed to the developer, so judges pay nothing.

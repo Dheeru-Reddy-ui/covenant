@@ -22,6 +22,7 @@ const db = vi.hoisted(() => ({
 vi.mock('../../src/forge/db/repo', () => ({
   listDecisionSnapshotsWithPeople: async () => db.snapshots,
   replaceDecisionSnapshot: async (id: string, brief: unknown) => void db.replaced.set(id, brief),
+  purgeAccessBefore: async () => 0,
   purgeContextBefore: async (before: number) => {
     db.purgedBefore.push(before);
     return 2;

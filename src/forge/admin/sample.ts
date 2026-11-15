@@ -71,12 +71,14 @@ const doc = (...paragraphs: string[]): AdfDoc => ({
   content: paragraphs.map((text) => ({ type: 'paragraph', content: [{ type: 'text', text }] })),
 });
 
-function pickTypes(types: IssueTypeResponse[]): { task: IssueTypeResponse; incident: IssueTypeResponse } {
+function pickTypes(types: IssueTypeResponse[]): { task: IssueTypeResponse; incident: IssueTypeResponse; contract: IssueTypeResponse } {
   const standard = types.filter((t) => (t.hierarchyLevel ?? (t.subtask ? -1 : 0)) === 0);
   const task = standard.find((t) => /^task$/i.test(t.name)) ?? standard[0];
   if (task === undefined) throw new UserFacingError('That project has no standard work type to create sample items with.');
   const incident = standard.find((t) => /incident/i.test(t.name)) ?? standard.find((t) => /^bug$/i.test(t.name)) ?? task;
-  return { task, incident };
+  // One-click setup adds a "Contract" work type; where a project has one, contracts use it.
+  const contract = standard.find((t) => /^contract$/i.test(t.name)) ?? task;
+  return { task, incident, contract };
 }
 
 /** Creates a work item assigned to the admin, or unassigned when the project will not take that assignee. */
@@ -123,14 +125,14 @@ export async function sampleWorker(event: AsyncEvent<SampleEventBody>): Promise<
 
   try {
     const req = asApp();
-    const { task, incident } = pickTypes(await projectIssueTypes(req, projectId));
+    const { task, incident, contract: contractType } = pickTypes(await projectIssueTypes(req, projectId));
     for (const contract of sampleWorkspace(todayUtc())) {
       await save(`Creating "${contract.workItemSummary}"`);
       const item = await createAssigned(
         req,
         {
           project: { id: projectId },
-          issuetype: { id: task.id },
+          issuetype: { id: contractType.id },
           summary: contract.workItemSummary,
           description: doc(
             'A fictional contract loaded by Covenant\'s sample workspace. The attached Word file is invented for testing.',

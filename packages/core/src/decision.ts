@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { type IsoDate, addDays, compareDates, diffDays } from './dates/civil';
+import type { HolidayList } from './dates/holidays';
 import type { RuleTiming, UnresolvedReason } from './dates/resolve';
 import { type ContractTerms, type TermProblem, termBounds } from './dates/terms';
 import { type Schedule, scheduleRule } from './schedule';
@@ -29,6 +30,8 @@ export interface WindowContext {
   minTermIndex: number;
   today: IsoDate;
   leadDays: number;
+  /** The contract's holiday list, for notice periods counted in business days. */
+  holidays?: HolidayList;
 }
 
 export type NoticeWindow =
@@ -54,7 +57,13 @@ export function noticeWindow(notices: readonly NoticeRule[], ctx: WindowContext)
 
   const scheduled = notices.map((n) => ({
     id: n.id,
-    schedule: scheduleRule(n.rule, { terms: ctx.terms, today: ctx.today, autoRenew: ctx.autoRenew, minTermIndex: ctx.minTermIndex }),
+    schedule: scheduleRule(n.rule, {
+      terms: ctx.terms,
+      today: ctx.today,
+      autoRenew: ctx.autoRenew,
+      minTermIndex: ctx.minTermIndex,
+      ...(ctx.holidays ? { holidays: ctx.holidays } : {}),
+    }),
   }));
 
   const pick = (status: 'upcoming' | 'past', earliest: boolean) => {
@@ -118,10 +127,10 @@ export interface RolloverShift {
 /** Each obligation's next due date now, and after marking the contract renewed into the next term. */
 export function rolloverPreview(
   items: readonly RolloverItem[],
-  ctx: { terms: ContractTerms; autoRenew: boolean; termIndex: number; today: IsoDate },
+  ctx: { terms: ContractTerms; autoRenew: boolean; termIndex: number; today: IsoDate; holidays?: HolidayList },
 ): RolloverShift[] {
   const due = (item: RolloverItem, minTermIndex: number): IsoDate | null => {
-    const s = scheduleRule(item.rule, { terms: ctx.terms, today: ctx.today, autoRenew: ctx.autoRenew, minTermIndex, eventDate: item.eventDate });
+    const s = scheduleRule(item.rule, { terms: ctx.terms, today: ctx.today, autoRenew: ctx.autoRenew, minTermIndex, eventDate: item.eventDate, ...(ctx.holidays ? { holidays: ctx.holidays } : {}) });
     return s.status === 'undated' ? null : s.due;
   };
   return items.map((item) => {
@@ -142,4 +151,34 @@ export function parseDecisionInput(input: unknown): { ok: true; value: DecisionI
   const parsed = DecisionInputSchema.safeParse(input);
   if (parsed.success) return { ok: true, value: parsed.data };
   return { ok: false, problems: parsed.error.issues.map((i) => (i.path.length > 0 ? `${i.path.map(String).join('.')}: ${i.message}` : i.message)) };
+}
+
+export interface DecisionMark {
+  outcome: string;
+  termIndex: number;
+  decidedAtMs: number;
+}
+
+/** The latest decision recorded for a term, or null when that term has none. */
+export function decisionForTerm<T extends DecisionMark>(decisions: readonly T[], termIndex: number): T | null {
+  let latest: T | null = null;
+  for (const d of decisions) {
+    if (d.termIndex === termIndex && (latest === null || d.decidedAtMs > latest.decidedAtMs)) latest = d;
+  }
+  return latest;
+}
+
+/**
+ * What is still to do once a decision is recorded.
+ * send_notice: the decision goes against what the contract does by default, so notice must reach the other party by the deadline.
+ * watch_deadline: talks are open, and the notice deadline still binds if they fail.
+ * too_late: notice was needed but the deadline has passed.
+ */
+export type DecisionFollowUp = 'none' | 'send_notice' | 'watch_deadline' | 'too_late';
+
+export function decisionFollowUp(outcome: string, ctx: { autoRenew: boolean; windowStatus: NoticeWindow['status'] }): DecisionFollowUp {
+  if (outcome === 'renegotiate') return ctx.windowStatus === 'passed' ? 'too_late' : 'watch_deadline';
+  const needsNotice = (outcome === 'terminate' && ctx.autoRenew) || (outcome === 'renew' && !ctx.autoRenew);
+  if (!needsNotice) return 'none';
+  return ctx.windowStatus === 'passed' ? 'too_late' : 'send_notice';
 }

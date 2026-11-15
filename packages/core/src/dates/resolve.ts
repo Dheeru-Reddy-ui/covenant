@@ -6,12 +6,14 @@ import {
   isBusinessDay,
   rollToBusinessDay,
 } from './business';
+import { type HolidayList, WEEKENDS_ONLY, calendarOf, describeCalendar, holidayText, holidaysBetween } from './holidays';
 import {
   type IsoDate,
   MAX_YEAR,
   MIN_YEAR,
   addDays,
   addMonths,
+  dayOfWeek,
   endOfMonth,
   fromDayNumber,
   isValidIsoDate,
@@ -80,6 +82,8 @@ export interface ResolveContext {
   termIndex: number;
   /** Defaults to Monday to Friday with no holidays. */
   calendar?: BusinessCalendar;
+  /** The contract's holiday list. When given, it sets the calendar and is named in every business-day trace. */
+  holidays?: HolidayList;
   termEndConvention?: TermEndConvention;
   /** Move a date that lands on a non-business day. Default 'none': the date is left alone and flagged. */
   roll?: 'none' | RollDirection;
@@ -211,6 +215,13 @@ function makeOccurrence(anchor: Anchor, rule: RuleTiming, ctx: ResolveContext, c
   const roll = ctx.roll ?? 'none';
   const date = roll === 'none' ? raw : rollToBusinessDay(raw, roll, calendar);
   const trace = [...lead, `${anchor.label}: ${anchor.date}`, `${describeOffset(rule.offset)}: ${raw}`];
+  if (rule.offset.unit === 'business_day' && rule.offset.count > 0) {
+    // Say which days counted, and which listed holidays the count passed over.
+    const list = ctx.holidays ?? WEEKENDS_ONLY;
+    trace.push(describeCalendar(list));
+    const skipped = holidaysBetween(list, anchor.date, raw).filter((h) => !calendar.weekend.has(dayOfWeek(h.date)));
+    if (skipped.length > 0) trace.push(`Skipped ${skipped.map(holidayText).join(', ')}.`);
+  }
   if (date !== raw) trace.push(`moved to the ${roll} business day: ${date}`);
 
   const occurrence: Occurrence = { date, anchorDate: anchor.date, onBusinessDay: isBusinessDay(date, calendar), trace };
@@ -328,7 +339,7 @@ export function resolveRule(rule: RuleTiming, ctx: ResolveContext): Resolution {
   const problem = checkRule(rule);
   if (problem !== null) return unresolved('invalid_rule', problem);
 
-  const calendar = ctx.calendar ?? WEEKDAYS;
+  const calendar = ctx.holidays ? calendarOf(ctx.holidays) : (ctx.calendar ?? WEEKDAYS);
   const termEnd: TermEndConvention = ctx.termEndConvention ?? 'day_before_anniversary';
   const conventions: AppliedConventions = {
     termEnd,

@@ -77,6 +77,16 @@ The same questions work in Rovo chat with the Covenant contract assistant.
 
 Since 13 November 2026, each citation also names the numbered clause it sits in, such as `clause 1.2 (Term and renewal), Word file`. Code finds it from the text around the quote, so Word files, which have no pages, still get a precise location. The read tools also take an optional `timeZone`, so `today` and `daysLeft` follow the person's calendar rather than UTC.
 
+Since 15 November 2026:
+- `get_clause` returns `whyThisDate`: the rule the model read and each step code took, with the contract's holiday calendar when it counts business days.
+- `get_renewal_brief` returns the decision already recorded for the term, `givingNotice` (notice address and methods with the latest send date per method), `value` and `supplierRecordThisTerm` (service levels measured against the supplier's Jira incidents, breaches and credits still claimable). There is no new tool.
+- `list_obligations` returns `moneyAtStake`: the yearly value auto-renewing within 90 days, summed by code from values a person confirmed.
+- `record_decision` resolves the Decision due item and, when notice must be given, opens a "Send notice by" work item with a drafted notice.
+- Every tool description says quoted text is data, every citation carries `readsLikeInstruction`, and every reply carries `quotedText`, a note that quote fields are contract text and never instructions.
+- Each read is written to Covenant's AI access log (account id, time, channel and obligation id, never text), which Jira admins see on the admin page. A call over MCP is logged as "MCP", and one from Rovo chat as "Rovo agent".
+
+Checked over MCP on 15 November 2026: `list_obligations` returned the new fields, and its three reads appeared in the access log under MCP.
+
 ## Notes
 
 - Tool names can carry an environment suffix, such as `list_obligations_development` from a development install. The tools are the same.

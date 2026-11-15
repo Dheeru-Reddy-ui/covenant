@@ -1,4 +1,4 @@
-import type { TermProblem, UnresolvedReason } from '../../packages/core/src';
+import type { DecisionFollowUp, TermProblem, UnresolvedReason } from '../../packages/core/src';
 
 /** Plain-English reasons shown to reviewers. They name facts and fixes, never contract text. */
 
@@ -18,6 +18,14 @@ export const ROLLOVER_BLOCKED_TEXT: Partial<Record<TermProblem, string>> = {
   missing_effective_date: 'Set the effective date under Contract terms before marking the contract renewed.',
   missing_initial_term: 'Set the initial term under Contract terms before marking the contract renewed.',
   conflicting_term_facts: "Fix the contract's term facts under Contract terms first: they contradict each other.",
+};
+
+/** What is still to do after a decision, in one sentence. {deadline} is filled in by the caller. */
+export const FOLLOW_UP_TEXT: Record<DecisionFollowUp, string> = {
+  none: 'Nothing more is needed before the notice deadline.',
+  send_notice: 'Notice must reach the other party by {deadline}.',
+  watch_deadline: 'Talks are open, but the notice deadline of {deadline} still applies if they fail.',
+  too_late: 'Notice was needed, but the deadline of {deadline} has passed for this term.',
 };
 
 export const OUTCOME_LABELS: Record<string, string> = {

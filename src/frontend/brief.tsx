@@ -91,8 +91,9 @@ function RecordDecisionModal({ contractId, onClose, run }: { contractId: string;
   const save = async () => {
     setSaving(true);
     const failed = await run('decision.record', { contractId, outcome, rationale }, (data) => {
-      const d = data as { commentedOn: string | null };
-      return `Decision recorded${d.commentedOn ? ` and added to ${d.commentedOn}` : ''}.`;
+      const d = data as { commentedOn: string | null; resolved: { key: string; status: string } | null; noticeItem: { key: string; created: boolean } | null; noticeNote: string | null };
+      const notice = d.noticeItem ? ` A drafted notice is on ${d.noticeItem.key}.` : d.noticeNote ? ` ${d.noticeNote}` : '';
+      return `Decision recorded${d.commentedOn ? ` and added to ${d.commentedOn}` : ''}${d.resolved ? `, which is now ${d.resolved.status}` : ''}.${notice}`;
     });
     setSaving(false);
     if (failed === null) onClose();
@@ -247,7 +248,10 @@ function BriefContext({ contractId }: { contractId: string }) {
           <Strong>Suggested owners</Strong>
         </Text>
         {ctx.owners.length === 0 && (
-          <Text size="small">Nobody yet: no one has worked on, commented on or owned anything linked to this contract. Assign the decision item to whoever owns the supplier.</Text>
+          <Text size="small">
+            No history yet: nobody has been assigned, commented on or owned anything linked to this contract, so Covenant suggests no one. Link the work that
+            involves this supplier to this work item and the people on it will show here.
+          </Text>
         )}
         {ctx.owners.map((o) => (
           <Stack key={o.accountId} space="space.050">
@@ -268,7 +272,7 @@ function BriefContext({ contractId }: { contractId: string }) {
         <Text>
           <Strong>Related work</Strong> ({ctx.related.length}, {incidents.length} incident{incidents.length === 1 ? '' : 's'})
         </Text>
-        {ctx.related.length === 0 && <Text size="small">No work items are linked to this contract's work item.</Text>}
+        {ctx.related.length === 0 && <Text size="small">No history yet: no work items are linked to this contract's work item.</Text>}
         {ctx.related.map((r) => (
           <Inline key={r.key} space="space.100" alignBlock="center" shouldWrap>
             <Link href={`/browse/${r.key}`}>{r.key}</Link>
@@ -277,9 +281,15 @@ function BriefContext({ contractId }: { contractId: string }) {
               {r.assignee ? `, ${r.assignee}` : ', unassigned'})
             </Text>
             {r.incident && <Lozenge appearance="removed">Incident</Lozenge>}
-            {r.viaCovenant && <Lozenge>Created by Covenant</Lozenge>}
+            {r.sample && <Lozenge>Sample data</Lozenge>}
           </Inline>
         ))}
+        {ctx.createdByCovenant > 0 && (
+          <Text size="small">
+            {ctx.createdByCovenant} work item{ctx.createdByCovenant === 1 ? '' : 's'} that Covenant created for this contract {ctx.createdByCovenant === 1 ? 'is' : 'are'} left
+            out here and do not count towards suggested owners.
+          </Text>
+        )}
       </Stack>
 
       <Stack space="space.050">
@@ -328,7 +338,10 @@ export function RenewalBrief({
 }) {
   const [recording, setRecording] = useState(false);
   const [renewing, setRenewing] = useState(false);
-  const label = WINDOW_LABEL[brief.window.status];
+  // Once a decision is recorded for this term, the brief says what was decided, not that a decision is needed.
+  const label: [string, Appearance] | null = brief.decided
+    ? [`Decided: ${brief.decided.outcomeLabel}`, brief.decided.followUp === 'too_late' ? 'removed' : 'success']
+    : WINDOW_LABEL[brief.window.status];
 
   return (
     <Box xcss={card}>
@@ -338,6 +351,14 @@ export function RenewalBrief({
           {label && <Lozenge appearance={label[1]}>{label[0]}</Lozenge>}
         </Inline>
         <Countdown brief={brief} />
+        {brief.decided && (
+          <Text>
+            <Strong>
+              Decided on {day(brief.decided.decidedAtMs)}: {brief.decided.outcomeLabel}.
+            </Strong>{' '}
+            {brief.decided.next}
+          </Text>
+        )}
         {brief.currentTerm && (
           <Text>
             <Strong>Term {brief.termNumber}:</Strong> {brief.currentTerm.start} to {brief.currentTerm.end}.{' '}

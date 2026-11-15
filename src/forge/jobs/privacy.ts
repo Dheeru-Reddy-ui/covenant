@@ -18,6 +18,8 @@ import { loggableError } from '../errors';
 /** Cached context is served for an hour; anything older is deleted rather than kept. */
 const CONTEXT_KEEP_MS = 60 * 60 * 1000;
 const SNAPSHOTS_PER_RUN = 200;
+/** The AI access log keeps 180 days: long enough to answer "who read this clause" for a renewal cycle, no longer. */
+export const ACCESS_KEEP_MS = 180 * 24 * 60 * 60 * 1000;
 
 export interface PrivacySummary {
   tracked: number;
@@ -26,6 +28,7 @@ export interface PrivacySummary {
   updated: number;
   scrubbedSnapshots: number;
   purgedContext: number;
+  purgedAccess: number;
   /** The reporting call failed; it is tried again on the next run. */
   reportFailed: boolean;
 }
@@ -38,7 +41,7 @@ const describeFailure = (error: unknown): string => {
 };
 
 export async function runPrivacyUpkeep(nowMs: number = Date.now(), report: Reporter = privacy.reportPersonalData): Promise<PrivacySummary> {
-  const summary: PrivacySummary = { tracked: 0, reported: 0, closed: 0, updated: 0, scrubbedSnapshots: 0, purgedContext: 0, reportFailed: false };
+  const summary: PrivacySummary = { tracked: 0, reported: 0, closed: 0, updated: 0, scrubbedSnapshots: 0, purgedContext: 0, purgedAccess: 0, reportFailed: false };
 
   // Names out of decision snapshots recorded before snapshots stopped keeping people.
   for (const { id, brief } of await repo.listDecisionSnapshotsWithPeople(SNAPSHOTS_PER_RUN)) {
@@ -49,6 +52,7 @@ export async function runPrivacyUpkeep(nowMs: number = Date.now(), report: Repor
   }
 
   summary.purgedContext = await repo.purgeContextBefore(nowMs - CONTEXT_KEEP_MS);
+  summary.purgedAccess = await repo.purgeAccessBefore(nowMs - ACCESS_KEEP_MS);
 
   // Track every stored account id, then report the ones due this cycle.
   const stored = (await repo.listStoredAccountIds()).filter(isReportableAccount);
@@ -83,7 +87,7 @@ export async function runPrivacyUpkeep(nowMs: number = Date.now(), report: Repor
 
   console.log(
     `privacy upkeep tracked=${summary.tracked} reported=${summary.reported} closed=${summary.closed} updated=${summary.updated} ` +
-      `scrubbedSnapshots=${summary.scrubbedSnapshots} purgedContext=${summary.purgedContext} reportFailed=${summary.reportFailed}`,
+      `scrubbedSnapshots=${summary.scrubbedSnapshots} purgedContext=${summary.purgedContext} purgedAccess=${summary.purgedAccess} reportFailed=${summary.reportFailed}`,
   );
   return summary;
 }

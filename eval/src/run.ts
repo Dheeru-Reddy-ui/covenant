@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { EXTRACTOR_VERSION, type ExtractionOutcome, PRODUCTION_MODEL, SCHEMA_VERSION, extractContract } from '../../packages/core/src';
 import { API_VERSION, AnthropicLlmClient, SDK_VERSION, TEMPERATURE } from './anthropic-client';
+import { type Baseline, gateEval } from './gate';
 import { type CuadContract, DEV_SAMPLE, EVAL_SAMPLE, loadCuad, selectSample } from './cuad';
 import { type EvalRun, renderReport, scoreRun } from './report';
 import { aggregate, rate } from './score';
@@ -13,6 +14,7 @@ import { aggregate, rate } from './score';
  * npm run eval -- --dev             the 10-contract dev split, for prompt work (report to eval/data/)
  * npm run eval -- --limit 3         a quick partial run (report to eval/data/)
  * npm run eval -- --rescore <file>  rebuild a report from a saved run, no model calls
+ * npm run eval -- --gate            also fail if the scores are lower than eval/baseline.json
  *
  * Prints contract ids, counts and timings only. Saved runs hold CUAD quotes and
  * stay in eval/data/, which git ignores.
@@ -30,6 +32,7 @@ const { values: args } = parseArgs({
     concurrency: { type: 'string', default: '3' },
     rescore: { type: 'string' },
     'no-critic': { type: 'boolean', default: false },
+    gate: { type: 'boolean', default: false },
   },
 });
 
@@ -49,6 +52,18 @@ function summarise(run: EvalRun, cuad: ReadonlyMap<string, CuadContract>, path: 
   console.log(`exact match, notice periods:  ${show(notice.exact, notice.scorable)} (${notice.exact}/${notice.scorable}), target 85%`);
   console.log(`clause recall: ${show(all.clauseHits, all.clauseGold)}; abstained: ${show(all.abstained, all.scorable)}`);
   console.log(`report written to ${path}`);
+
+  // The numbers the gate compares, printed so eval/baseline.json can be raised by hand after a better run.
+  const now = { noticeExact: notice.exact, noticeTotal: notice.scorable, allExact: all.exact, allTotal: all.scorable, wrong: all.answered - all.exact };
+  console.log(`gate numbers: ${JSON.stringify(now)}`);
+  if (args.gate) {
+    const baseline = JSON.parse(readFileSync(join(EVAL_DIR, 'baseline.json'), 'utf8')) as Baseline;
+    const gate = gateEval(baseline.eval, now);
+    if (!gate.ok) {
+      console.error(`Gate failed: ${gate.failures.join('; ')}.`);
+      process.exitCode = 1;
+    } else console.log('Gate passed: no lower than eval/baseline.json.');
+  }
 }
 
 async function pool<T, R>(items: readonly T[], size: number, work: (item: T, index: number) => Promise<R>): Promise<R[]> {

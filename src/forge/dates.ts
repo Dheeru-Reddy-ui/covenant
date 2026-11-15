@@ -34,6 +34,7 @@ export function scheduleFor(rule: ObligationRule, run: RunRow, contract: Contrac
     autoRenew: run.autoRenew,
     minTermIndex: contract.termIndex,
     eventDate,
+    holidays: contract.holidays,
   };
   return scheduleRule(rule, ctx);
 }

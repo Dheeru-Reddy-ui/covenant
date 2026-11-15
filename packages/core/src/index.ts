@@ -11,6 +11,7 @@ export const CORE_VERSION = '0.2.0';
 
 export * from './dates/civil';
 export * from './dates/business';
+export * from './dates/holidays';
 export * from './dates/terms';
 export * from './dates/resolve';
 export * from './dates/written';
@@ -28,6 +29,12 @@ export * from './owners';
 export * from './tools';
 export * from './sections';
 export * from './privacy';
+export * from './money';
+export * from './injection';
+export * from './details';
+export * from './notice';
+export * from './sla';
+export * from './evidence';
 export {
   AnchorEventSchema,
   ClauseSchema,

@@ -1,0 +1,5 @@
+{
+  "traps": { "passed": 20, "total": 20 },
+  "eval": { "noticeExact": 14, "noticeTotal": 15, "allExact": 57, "allTotal": 72, "wrong": 0 },
+  "recorded": { "on": "2026-11-15", "model": "claude-haiku-4-5-20251001", "extractorVersion": 2, "contracts": 30, "quotesVerified": 348, "quotesReturned": 361 }
+}

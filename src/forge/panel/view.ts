@@ -7,6 +7,8 @@ import {
   type Schedule,
   canApprove,
   currentTermIndex,
+  describeCalendar,
+  instructionSigns,
   describeSection,
   describeTiming,
   termBounds,
@@ -23,6 +25,8 @@ import type {
   TermsView,
 } from '../../shared/panel';
 import { scheduleFor } from '../dates';
+import { detailsView } from '../details/service';
+import { evidenceView } from '../pipeline/evidence';
 import { MAX_ATTACHMENT_BYTES } from '../pipeline/start';
 import * as repo from '../db/repo';
 import { ensureSchema } from '../db/schema';
@@ -201,6 +205,7 @@ async function runView(run: repo.RunRow, contract: repo.ContractRow, today: stri
       confidence: o.rule.confidence,
       needsReview: o.extractorStatus === 'needs_review' && o.decision === 'pending',
       review: reviewLines(o.review),
+      instructionSigns: instructionSigns(byId.get(o.clauseId)?.quote ?? ''),
       secondReading: o.secondRule === null ? null : describeSecond(o.secondRule),
       clause: clauseView(byId.get(o.clauseId), run.paginated),
       decision: o.decision,
@@ -244,6 +249,7 @@ async function runView(run: repo.RunRow, contract: repo.ContractRow, today: stri
       rejected: views.filter((v) => v.decision === 'rejected').length,
     },
     brief,
+    details: brief === null ? null : await detailsView({ contract, run, obligations, clauses: byId, state: extras.state, decisions: [...extras.decisions] }, brief),
   };
 }
 
@@ -268,6 +274,12 @@ export async function loadPanel(issueId: string, today: string): Promise<PanelVi
       attachmentId: contract.attachmentId,
       termIndex: contract.termIndex,
       createdAtMs: contract.createdAtMs,
+      calendar: {
+        name: contract.holidays.name,
+        holidays: contract.holidays.holidays,
+        rule: describeCalendar(contract.holidays),
+        usedBy: run === null ? 0 : (await repo.listObligations(run.id)).filter((o) => o.decision !== 'rejected' && o.rule.offset.unit === 'business_day').length,
+      },
       run: run === null ? null : await runView(run, contract, today, nowMs, { state, decisions, leadDays }),
     });
   }
@@ -285,5 +297,6 @@ export async function loadPanel(issueId: string, today: string): Promise<PanelVi
       contractId: contracts.find((c) => c.attachmentId === a.id)?.id ?? null,
     })),
     contracts: contractViews,
+    evidence: await evidenceView(issue, today),
   };
 }

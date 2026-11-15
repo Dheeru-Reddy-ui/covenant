@@ -1,6 +1,6 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { type SourceDocument, locateQuote, normaliseWhitespace, verifyQuote } from '../src/verify';
+import { type SourceDocument, locateQuote, normaliseWhitespace, textAround, verifyQuote } from '../src/verify';
 
 const doc = (...pages: string[]): SourceDocument => ({
   pages: pages.map((text, i) => ({ page: i + 1, text })),
@@ -220,5 +220,22 @@ describe('verifyQuote properties', () => {
         }
       }),
     );
+  });
+});
+
+describe('textAround', () => {
+  const page = {
+    pages: [
+      { page: 1, text: 'Preamble words here. 4.1 Supplier shall maintain professional indemnity insurance of at least two million euros.\n4.2 Supplier shall deliver a certificate evidencing the insurance required by this clause each year. 5. Next clause follows here.' },
+    ],
+  };
+  it('returns the quote with the clause before it and a little after', () => {
+    const text = textAround('Supplier shall deliver a certificate evidencing the insurance required by this clause each year.', page, null, { before: 100, after: 12 });
+    expect(text).toContain('4.1 Supplier shall maintain professional indemnity insurance of at least two million euros.');
+    expect(text).toContain('evidencing the insurance required by this clause each year.');
+    expect(text?.endsWith('5. Next')).toBe(true);
+  });
+  it('is null for a quote that is not in the document', () => {
+    expect(textAround('A sentence that the document does not contain anywhere.', page, null)).toBeNull();
   });
 });

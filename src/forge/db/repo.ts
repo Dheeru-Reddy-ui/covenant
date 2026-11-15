@@ -1,6 +1,8 @@
 import { type UpdateQueryResponse, sql } from '@forge/sql';
+import { type HolidayList, WEEKENDS_ONLY, readHolidayList } from '../../../packages/core/src';
 import type {
   ClauseSection,
+  DetailKind,
   ContractTerms,
   FactStatus,
   IsoDate,
@@ -32,6 +34,8 @@ export interface ContractRow {
   termIndex: number;
   createdBy: string;
   createdAtMs: number;
+  /** The contract's holiday list, from contract_setting. Weekends only until a person sets one. */
+  holidays: HolidayList;
 }
 
 export type FactState = 'ready' | 'needs_review' | 'missing' | 'edited';
@@ -150,6 +154,19 @@ const json = <T>(v: unknown): T | null => (v === null || v === undefined || v ==
 const CONTRACT_COLUMNS =
   'id, issue_id, issue_key, project_id, attachment_id, attachment_sha256, file_name, file_kind, byte_length, term_index, created_by, created_at_ms';
 
+// Every read brings the contract's holiday list with it, so no date is ever worked out without it.
+const CONTRACT_SELECT =
+  'SELECT c.id, c.issue_id, c.issue_key, c.project_id, c.attachment_id, c.attachment_sha256, c.file_name, c.file_kind, c.byte_length, c.term_index, ' +
+  "c.created_by, c.created_at_ms, cal.value AS calendar_json FROM contract c LEFT JOIN contract_setting cal ON cal.contract_id = c.id AND cal.name = 'calendar'";
+
+function storedHolidays(v: unknown): HolidayList {
+  try {
+    return readHolidayList(json<unknown>(v));
+  } catch {
+    return WEEKENDS_ONLY;
+  }
+}
+
 const toContract = (r: Raw): ContractRow => ({
   id: String(r.id),
   issueId: String(r.issue_id),
@@ -163,6 +180,7 @@ const toContract = (r: Raw): ContractRow => ({
   termIndex: num(r.term_index),
   createdBy: String(r.created_by),
   createdAtMs: num(r.created_at_ms),
+  holidays: storedHolidays(r.calendar_json),
 });
 
 /** Inserts unless this file is already a contract on this work item. Returns whether a row was added. */
@@ -186,12 +204,12 @@ export async function insertContractIfNew(c: ContractRow): Promise<boolean> {
 }
 
 export async function findContract(issueId: string, sha256: string): Promise<ContractRow | null> {
-  const rows = await select(`SELECT ${CONTRACT_COLUMNS} FROM contract WHERE issue_id = ? AND attachment_sha256 = ?`, issueId, sha256);
+  const rows = await select(`${CONTRACT_SELECT} WHERE c.issue_id = ? AND c.attachment_sha256 = ?`, issueId, sha256);
   return rows[0] ? toContract(rows[0]) : null;
 }
 
 export async function getContract(id: string): Promise<ContractRow | null> {
-  const rows = await select(`SELECT ${CONTRACT_COLUMNS} FROM contract WHERE id = ?`, id);
+  const rows = await select(`${CONTRACT_SELECT} WHERE c.id = ?`, id);
   return rows[0] ? toContract(rows[0]) : null;
 }
 
@@ -200,7 +218,7 @@ export async function setContractAttachment(id: string, attachmentId: string): P
 }
 
 export async function listContractsForIssue(issueId: string): Promise<ContractRow[]> {
-  const rows = await select(`SELECT ${CONTRACT_COLUMNS} FROM contract WHERE issue_id = ? ORDER BY created_at_ms DESC LIMIT 20`, issueId);
+  const rows = await select(`${CONTRACT_SELECT} WHERE c.issue_id = ? ORDER BY c.created_at_ms DESC LIMIT 20`, issueId);
   return rows.map(toContract);
 }
 
@@ -684,7 +702,7 @@ export async function saveApprovedDueDate(id: string, dueDate: IsoDate | null, s
 const PORTFOLIO_LIMIT = 500;
 
 export async function listAllContracts(): Promise<ContractRow[]> {
-  return (await select(`SELECT ${CONTRACT_COLUMNS} FROM contract ORDER BY created_at_ms DESC LIMIT ${PORTFOLIO_LIMIT}`)).map(toContract);
+  return (await select(`${CONTRACT_SELECT} ORDER BY c.created_at_ms DESC LIMIT ${PORTFOLIO_LIMIT}`)).map(toContract);
 }
 
 /** The newest finished run of every contract that has one. */
@@ -930,6 +948,11 @@ const ACCOUNT_COLUMNS: ReadonlyArray<[table: string, column: string]> = [
   ['decision', 'decided_by'],
   ['contract_state', 'renewed_by'],
   ['app_setting', 'updated_by'],
+  ['contract_setting', 'updated_by'],
+  ['contract_detail', 'decided_by'],
+  ['evidence_check', 'requested_by'],
+  ['evidence_check', 'commented_by'],
+  ['access_log', 'account_id'],
 ];
 
 /** Every account id Covenant stores, including reviewers named inside a run's edited term facts. */
@@ -980,6 +1003,8 @@ export async function refreshAccount(accountId: string, nowMs: number): Promise<
 export async function eraseAccount(accountId: string, erased: string, nowMs: number): Promise<void> {
   for (const [table, column] of ACCOUNT_COLUMNS) {
     if (table === 'app_setting') await change(`UPDATE app_setting SET updated_by = NULL WHERE updated_by = ?`, accountId);
+    // The access log's unique key includes the account, so a closed account's entries are removed rather than renamed.
+    else if (table === 'access_log') await change('DELETE FROM access_log WHERE account_id = ?', accountId);
     else await change(`UPDATE ${table} SET ${column} = ? WHERE ${column} = ?`, erased, accountId);
   }
   for (const row of await select('SELECT id, facts_json FROM extraction_run WHERE facts_json LIKE ?', containing(accountId))) {
@@ -1005,4 +1030,498 @@ export async function listDecisionSnapshotsWithPeople(limit: number): Promise<Ar
 
 export async function replaceDecisionSnapshot(id: string, brief: unknown): Promise<void> {
   await change('UPDATE decision SET brief_json = ? WHERE id = ?', JSON.stringify(brief), id);
+}
+
+// ---- created_item: work items Covenant itself created ----
+
+export type CreatedKind = 'obligation' | 'decision' | 'notice' | 'claim' | 'sample';
+
+export async function recordCreatedItem(issueKey: string, contractId: string, kind: CreatedKind, nowMs: number): Promise<void> {
+  await change('INSERT IGNORE INTO created_item (issue_key, contract_id, kind, created_at_ms) VALUES (?, ?, ?, ?)', issueKey, contractId, kind, nowMs);
+}
+
+/**
+ * Keys of every work item Covenant created for a contract: recorded ones, plus
+ * approved obligations and the decision item from before they were recorded.
+ */
+export async function listCreatedKeys(contractId: string): Promise<Set<string>> {
+  const keys = new Set<string>();
+  for (const row of await select('SELECT issue_key AS k FROM created_item WHERE contract_id = ?', contractId)) keys.add(String(row.k));
+  for (const row of await select('SELECT work_item_key AS k FROM obligation WHERE contract_id = ? AND work_item_key IS NOT NULL', contractId)) keys.add(String(row.k));
+  for (const row of await select('SELECT decision_item_key AS k FROM contract_state WHERE contract_id = ? AND decision_item_key IS NOT NULL', contractId)) keys.add(String(row.k));
+  return keys;
+}
+
+export async function listCreatedItems(contractId: string, kind: CreatedKind): Promise<string[]> {
+  return (await select('SELECT issue_key AS k FROM created_item WHERE contract_id = ? AND kind = ? ORDER BY created_at_ms DESC', contractId, kind)).map((r) => String(r.k));
+}
+
+// ---- contract_setting ----
+
+export async function getContractSetting<T>(contractId: string, name: string): Promise<T | null> {
+  const rows = await select('SELECT value FROM contract_setting WHERE contract_id = ? AND name = ?', contractId, name);
+  try {
+    return rows[0] ? (JSON.parse(String(rows[0].value)) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function listContractSettings<T>(name: string, contractIds: readonly string[]): Promise<Map<string, T>> {
+  const found = new Map<string, T>();
+  if (contractIds.length === 0) return found;
+  const rows = await inChunks(contractIds, async (chunk) => select(`SELECT contract_id, value FROM contract_setting WHERE name = ? AND contract_id IN (${marks(chunk.length)})`, name, ...chunk));
+  for (const r of rows) {
+    try {
+      found.set(String(r.contract_id), JSON.parse(String(r.value)) as T);
+    } catch {
+      // An unreadable setting is treated as not set.
+    }
+  }
+  return found;
+}
+
+export async function putContractSetting(contractId: string, name: string, value: unknown, by: string | null, nowMs: number): Promise<void> {
+  const text = JSON.stringify(value);
+  await change('INSERT IGNORE INTO contract_setting (contract_id, name, value, updated_by, updated_at_ms) VALUES (?, ?, ?, ?, ?)', contractId, name, text, by, nowMs);
+  await change('UPDATE contract_setting SET value = ?, updated_by = ?, updated_at_ms = ? WHERE contract_id = ? AND name = ?', text, by, nowMs, contractId, name);
+}
+
+export async function listDecisionsForContracts(contractIds: readonly string[]): Promise<DecisionRow[]> {
+  if (contractIds.length === 0) return [];
+  return inChunks(contractIds, async (chunk) =>
+    (await select(`SELECT ${DECISION_COLUMNS} FROM decision WHERE contract_id IN (${marks(chunk.length)}) ORDER BY decided_at_ms DESC`, ...chunk)).map(toDecision),
+  );
+}
+
+// ---- details pass: parties, notices, value, service levels ----
+
+export type DetailsRunStatus = 'queued' | 'running' | 'done' | 'failed';
+
+export interface DetailsRunRow {
+  runId: string;
+  contractId: string;
+  status: DetailsRunStatus;
+  detailsVersion: number;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  calls: number;
+  quotesReturned: number;
+  quotesVerified: number;
+  rejectedCount: number;
+  error: string | null;
+  queuedAtMs: number;
+  finishedAtMs: number | null;
+}
+
+const toDetailsRun = (r: Raw): DetailsRunRow => ({
+  runId: String(r.run_id),
+  contractId: String(r.contract_id),
+  status: String(r.status) as DetailsRunStatus,
+  detailsVersion: num(r.details_version),
+  model: String(r.model),
+  inputTokens: num(r.input_tokens),
+  outputTokens: num(r.output_tokens),
+  calls: num(r.calls),
+  quotesReturned: num(r.quotes_returned),
+  quotesVerified: num(r.quotes_verified),
+  rejectedCount: num(r.rejected_count),
+  error: strOrNull(r.error),
+  queuedAtMs: num(r.queued_at_ms),
+  finishedAtMs: numOrNull(r.finished_at_ms),
+});
+
+export async function getDetailsRun(runId: string): Promise<DetailsRunRow | null> {
+  const rows = await select('SELECT * FROM details_run WHERE run_id = ?', runId);
+  return rows[0] ? toDetailsRun(rows[0]) : null;
+}
+
+export async function listDetailsRuns(runIds: readonly string[]): Promise<Map<string, DetailsRunRow>> {
+  const out = new Map<string, DetailsRunRow>();
+  if (runIds.length === 0) return out;
+  const rows = await inChunks(runIds, async (chunk) => select(`SELECT * FROM details_run WHERE run_id IN (${marks(chunk.length)})`, ...chunk));
+  for (const r of rows) out.set(String(r.run_id), toDetailsRun(r));
+  return out;
+}
+
+/** Claims the details pass for a run: true when this call may run it (first time, a failed one, or one stuck since before `staleBeforeMs`). */
+export async function claimDetailsRun(runId: string, contractId: string, detailsVersion: number, model: string, nowMs: number, staleBeforeMs: number): Promise<boolean> {
+  const added = await change(
+    "INSERT IGNORE INTO details_run (run_id, contract_id, status, details_version, model, queued_at_ms) VALUES (?, ?, 'running', ?, ?, ?)",
+    runId,
+    contractId,
+    detailsVersion,
+    model,
+    nowMs,
+  );
+  if (added === 1) return true;
+  const retaken = await change(
+    "UPDATE details_run SET status = 'running', details_version = ?, model = ?, queued_at_ms = ?, error = NULL WHERE run_id = ? AND (status = 'failed' OR status = 'queued' OR (status = 'running' AND queued_at_ms < ?))",
+    detailsVersion,
+    model,
+    nowMs,
+    runId,
+    staleBeforeMs,
+  );
+  return retaken === 1;
+}
+
+export async function markDetailsQueued(runId: string, contractId: string, detailsVersion: number, model: string, nowMs: number): Promise<boolean> {
+  const added = await change(
+    "INSERT IGNORE INTO details_run (run_id, contract_id, status, details_version, model, queued_at_ms) VALUES (?, ?, 'queued', ?, ?, ?)",
+    runId,
+    contractId,
+    detailsVersion,
+    model,
+    nowMs,
+  );
+  if (added === 1) return true;
+  return (await change("UPDATE details_run SET status = 'queued', queued_at_ms = ?, error = NULL WHERE run_id = ? AND status = 'failed'", nowMs, runId)) === 1;
+}
+
+export async function finishDetailsRun(
+  runId: string,
+  outcome: { status: 'done' | 'failed'; inputTokens: number; outputTokens: number; calls: number; quotesReturned: number; quotesVerified: number; rejectedCount: number; error: string | null },
+  nowMs: number,
+): Promise<void> {
+  await change(
+    'UPDATE details_run SET status = ?, input_tokens = ?, output_tokens = ?, calls = ?, quotes_returned = ?, quotes_verified = ?, rejected_count = ?, error = ?, finished_at_ms = ? WHERE run_id = ?',
+    outcome.status,
+    outcome.inputTokens,
+    outcome.outputTokens,
+    outcome.calls,
+    outcome.quotesReturned,
+    outcome.quotesVerified,
+    outcome.rejectedCount,
+    outcome.error,
+    nowMs,
+    runId,
+  );
+}
+
+export type DetailDecision = 'pending' | 'confirmed' | 'rejected';
+
+export interface DetailRow {
+  id: string;
+  runId: string;
+  contractId: string;
+  kind: DetailKind;
+  ordinal: number;
+  /** The kind's data as core produced it, without the nested quote locations' offsets. */
+  data: unknown;
+  quote: string;
+  page: number;
+  pageEnd: number;
+  ambiguous: boolean;
+  section: ClauseSection | null;
+  confidence: string;
+  status: 'ready' | 'needs_review';
+  review: string[];
+  decision: DetailDecision;
+  decidedBy: string | null;
+  decidedAtMs: number | null;
+}
+
+const toDetail = (r: Raw): DetailRow => ({
+  id: String(r.id),
+  runId: String(r.run_id),
+  contractId: String(r.contract_id),
+  kind: String(r.kind) as DetailKind,
+  ordinal: num(r.ordinal),
+  data: json<unknown>(r.data_json),
+  quote: String(r.quote),
+  page: num(r.page),
+  pageEnd: num(r.page_end),
+  ambiguous: bool(r.ambiguous),
+  section: json<ClauseSection>(r.section_json),
+  confidence: String(r.confidence),
+  status: String(r.status) as DetailRow['status'],
+  review: json<string[]>(r.review_json) ?? [],
+  decision: String(r.decision) as DetailDecision,
+  decidedBy: strOrNull(r.decided_by),
+  decidedAtMs: numOrNull(r.decided_at_ms),
+});
+
+export async function deleteDetails(runId: string): Promise<void> {
+  await change('DELETE FROM contract_detail WHERE run_id = ?', runId);
+}
+
+export async function insertDetail(d: Omit<DetailRow, 'decision' | 'decidedBy' | 'decidedAtMs'>, nowMs: number): Promise<void> {
+  await change(
+    'INSERT INTO contract_detail (id, run_id, contract_id, kind, ordinal, data_json, quote, page, page_end, ambiguous, section_json, confidence, status, review_json, decision, created_at_ms) ' +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+    d.id,
+    d.runId,
+    d.contractId,
+    d.kind,
+    d.ordinal,
+    JSON.stringify(d.data),
+    d.quote,
+    d.page,
+    d.pageEnd,
+    d.ambiguous ? 1 : 0,
+    d.section === null ? null : JSON.stringify(d.section),
+    d.confidence,
+    d.status,
+    JSON.stringify(d.review),
+    nowMs,
+  );
+}
+
+export async function listDetails(runId: string): Promise<DetailRow[]> {
+  return (await select('SELECT * FROM contract_detail WHERE run_id = ? ORDER BY kind, ordinal', runId)).map(toDetail);
+}
+
+export async function listDetailsForRuns(runIds: readonly string[], kind?: DetailKind): Promise<DetailRow[]> {
+  if (runIds.length === 0) return [];
+  return inChunks(runIds, async (chunk) =>
+    (
+      await select(
+        `SELECT * FROM contract_detail WHERE run_id IN (${marks(chunk.length)})${kind ? ' AND kind = ?' : ''} ORDER BY kind, ordinal`,
+        ...chunk,
+        ...(kind ? [kind] : []),
+      )
+    ).map(toDetail),
+  );
+}
+
+export async function getDetail(id: string): Promise<DetailRow | null> {
+  const rows = await select('SELECT * FROM contract_detail WHERE id = ?', id);
+  return rows[0] ? toDetail(rows[0]) : null;
+}
+
+export async function decideDetail(id: string, decision: DetailDecision, by: string, nowMs: number): Promise<boolean> {
+  return (await change('UPDATE contract_detail SET decision = ?, decided_by = ?, decided_at_ms = ? WHERE id = ?', decision, by, nowMs, id)) === 1;
+}
+
+// --- Evidence checks ---------------------------------------------------------
+
+/** The approved obligation whose work item this is, if Covenant created it. */
+export async function findObligationByWorkItem(issueId: string): Promise<ObligationRow | null> {
+  const rows = await select(`SELECT ${OBLIGATION_COLUMNS} FROM obligation WHERE work_item_id = ? AND decision = 'approved' ORDER BY updated_at_ms DESC LIMIT 1`, issueId);
+  return rows[0] ? toObligation(rows[0]) : null;
+}
+
+export type EvidenceStatus = 'queued' | 'running' | 'done' | 'failed';
+export type EvidenceVerdictValue = 'pass' | 'fail' | 'needs_review';
+
+export interface EvidenceCheckRow {
+  id: string;
+  obligationId: string;
+  contractId: string;
+  issueId: string;
+  attachmentId: string;
+  fileName: string;
+  /** 'panel' when a person clicked Check, 'attachment' when Covenant saw the file arrive. */
+  source: string;
+  status: EvidenceStatus;
+  verdict: EvidenceVerdictValue | null;
+  result: unknown;
+  evidenceVersion: number;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  calls: number;
+  error: string | null;
+  requestedBy: string | null;
+  commentedBy: string | null;
+  queuedAtMs: number;
+  finishedAtMs: number | null;
+}
+
+const toEvidence = (r: Raw): EvidenceCheckRow => ({
+  id: String(r.id),
+  obligationId: String(r.obligation_id),
+  contractId: String(r.contract_id),
+  issueId: String(r.issue_id),
+  attachmentId: String(r.attachment_id),
+  fileName: String(r.file_name),
+  source: String(r.source),
+  status: String(r.status) as EvidenceStatus,
+  verdict: strOrNull(r.verdict) as EvidenceVerdictValue | null,
+  result: json<unknown>(r.result_json),
+  evidenceVersion: num(r.evidence_version),
+  model: String(r.model),
+  inputTokens: num(r.input_tokens),
+  outputTokens: num(r.output_tokens),
+  calls: num(r.calls),
+  error: strOrNull(r.error),
+  requestedBy: strOrNull(r.requested_by),
+  commentedBy: strOrNull(r.commented_by),
+  queuedAtMs: num(r.queued_at_ms),
+  finishedAtMs: numOrNull(r.finished_at_ms),
+});
+
+/** Queues a check, or re-queues one that failed. False when it is already queued, running or done. */
+export async function queueEvidenceCheck(
+  c: Pick<EvidenceCheckRow, 'id' | 'obligationId' | 'contractId' | 'issueId' | 'attachmentId' | 'fileName' | 'source' | 'evidenceVersion' | 'model' | 'requestedBy'>,
+  nowMs: number,
+): Promise<{ id: string; queued: boolean }> {
+  const inserted = await change(
+    'INSERT IGNORE INTO evidence_check (id, obligation_id, contract_id, issue_id, attachment_id, file_name, source, status, evidence_version, model, requested_by, queued_at_ms) ' +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)",
+    c.id,
+    c.obligationId,
+    c.contractId,
+    c.issueId,
+    c.attachmentId,
+    c.fileName.slice(0, 255),
+    c.source,
+    c.evidenceVersion,
+    c.model,
+    c.requestedBy,
+    nowMs,
+  );
+  if (inserted === 1) return { id: c.id, queued: true };
+  const rows = await select('SELECT id FROM evidence_check WHERE obligation_id = ? AND attachment_id = ? AND evidence_version = ?', c.obligationId, c.attachmentId, c.evidenceVersion);
+  const id = rows[0] ? String(rows[0].id) : c.id;
+  const requeued = await change(
+    "UPDATE evidence_check SET status = 'queued', verdict = NULL, result_json = NULL, error = NULL, source = ?, requested_by = ?, queued_at_ms = ?, finished_at_ms = NULL WHERE id = ? AND status = 'failed'",
+    c.source,
+    c.requestedBy,
+    nowMs,
+    id,
+  );
+  return { id, queued: requeued === 1 };
+}
+
+/** Takes a queued check, or one left running by a worker that died. */
+export async function claimEvidenceCheck(id: string, nowMs: number, staleBeforeMs: number): Promise<boolean> {
+  return (
+    (await change(
+      "UPDATE evidence_check SET status = 'running', queued_at_ms = ? WHERE id = ? AND (status = 'queued' OR (status = 'running' AND queued_at_ms < ?))",
+      nowMs,
+      id,
+      staleBeforeMs,
+    )) === 1
+  );
+}
+
+export async function finishEvidenceCheck(
+  id: string,
+  f: { status: 'done' | 'failed'; verdict: EvidenceVerdictValue | null; result: unknown; model: string; inputTokens: number; outputTokens: number; calls: number; error: string | null },
+  nowMs: number,
+): Promise<void> {
+  await change(
+    'UPDATE evidence_check SET status = ?, verdict = ?, result_json = ?, model = ?, input_tokens = ?, output_tokens = ?, calls = ?, error = ?, finished_at_ms = ? WHERE id = ?',
+    f.status,
+    f.verdict,
+    f.result === null ? null : JSON.stringify(f.result),
+    f.model,
+    f.inputTokens,
+    f.outputTokens,
+    f.calls,
+    f.error === null ? null : f.error.slice(0, 500),
+    nowMs,
+    id,
+  );
+}
+
+export async function getEvidenceCheck(id: string): Promise<EvidenceCheckRow | null> {
+  const rows = await select('SELECT * FROM evidence_check WHERE id = ?', id);
+  return rows[0] ? toEvidence(rows[0]) : null;
+}
+
+export async function listEvidenceChecks(obligationId: string): Promise<EvidenceCheckRow[]> {
+  return (await select('SELECT * FROM evidence_check WHERE obligation_id = ? ORDER BY queued_at_ms DESC', obligationId)).map(toEvidence);
+}
+
+/** Records who posted the chase draft as a comment. False when someone already did. */
+export async function markEvidenceCommented(id: string, accountId: string): Promise<boolean> {
+  return (await change('UPDATE evidence_check SET commented_by = ? WHERE id = ? AND commented_by IS NULL', accountId, id)) === 1;
+}
+
+export async function unmarkEvidenceCommented(id: string): Promise<void> {
+  await change('UPDATE evidence_check SET commented_by = NULL WHERE id = ?', id);
+}
+
+// --- AI access log -------------------------------------------------------------
+
+export type AccessChannel = 'panel' | 'rovo' | 'mcp';
+
+export interface AccessEntry {
+  accountId: string;
+  channel: AccessChannel;
+  action: string;
+  /** The obligation whose clause was read, or '' for contract-level reads such as a renewal brief. */
+  obligationId: string;
+  contractId: string;
+}
+
+const ACCESS_BUCKET_MS = 10 * 60 * 1000;
+
+/** One statement for many reads. Repeats in the same ten minutes are ignored by the unique key. */
+export async function logAccess(entries: readonly AccessEntry[], nowMs: number): Promise<number> {
+  if (entries.length === 0) return 0;
+  const bucket = Math.floor(nowMs / ACCESS_BUCKET_MS);
+  let written = 0;
+  for (let i = 0; i < entries.length; i += 100) {
+    const chunk = entries.slice(i, i + 100);
+    written += await change(
+      `INSERT IGNORE INTO access_log (account_id, channel, action, obligation_id, contract_id, bucket, at_ms) VALUES ${chunk.map(() => '(?, ?, ?, ?, ?, ?, ?)').join(', ')}`,
+      ...chunk.flatMap((e) => [e.accountId, e.channel, e.action.slice(0, 32), e.obligationId, e.contractId, bucket, nowMs]),
+    );
+  }
+  return written;
+}
+
+export interface AccessRow extends AccessEntry {
+  atMs: number;
+  /** The obligation's kind and the contract's work item key, for the admin's list. Null when they have since been deleted. */
+  kind: string | null;
+  issueKey: string | null;
+}
+
+export async function listAccess(limit: number): Promise<AccessRow[]> {
+  const n = Math.max(1, Math.min(500, Math.floor(limit)));
+  return (
+    await select(
+      'SELECT a.account_id, a.channel, a.action, a.obligation_id, a.contract_id, a.at_ms, o.kind, c.issue_key FROM access_log a ' +
+        `LEFT JOIN obligation o ON o.id = a.obligation_id LEFT JOIN contract c ON c.id = a.contract_id ORDER BY a.at_ms DESC LIMIT ${n}`,
+    )
+  ).map((r) => ({
+    accountId: String(r.account_id),
+    channel: String(r.channel) as AccessChannel,
+    action: String(r.action),
+    obligationId: String(r.obligation_id),
+    contractId: String(r.contract_id),
+    atMs: num(r.at_ms),
+    kind: strOrNull(r.kind),
+    issueKey: strOrNull(r.issue_key),
+  }));
+}
+
+export async function countAccessByChannel(sinceMs: number): Promise<Record<AccessChannel, number>> {
+  const out: Record<AccessChannel, number> = { panel: 0, rovo: 0, mcp: 0 };
+  for (const r of await select('SELECT channel, COUNT(*) AS n FROM access_log WHERE at_ms >= ? GROUP BY channel', sinceMs)) {
+    const channel = String(r.channel) as AccessChannel;
+    if (channel in out) out[channel] = num(r.n);
+  }
+  return out;
+}
+
+/** Entries older than the retention period go, run by the daily check. */
+export async function purgeAccessBefore(beforeMs: number): Promise<number> {
+  return change('DELETE FROM access_log WHERE at_ms < ?', beforeMs);
+}
+
+// --- Quality -------------------------------------------------------------------
+
+/** Approved obligations, and how many of those a person approved without changing the extractor's rule. */
+export async function approvalQuality(): Promise<{ approved: number; unedited: number; rejected: number; pending: number }> {
+  const rows = await select(
+    "SELECT decision, CASE WHEN rule_json = original_rule_json THEN 1 ELSE 0 END AS same, COUNT(*) AS n FROM obligation GROUP BY decision, CASE WHEN rule_json = original_rule_json THEN 1 ELSE 0 END",
+  );
+  const out = { approved: 0, unedited: 0, rejected: 0, pending: 0 };
+  for (const r of rows) {
+    const decision = String(r.decision);
+    const n = num(r.n);
+    if (decision === 'approved') {
+      out.approved += n;
+      if (num(r.same) === 1) out.unedited += n;
+    } else if (decision === 'rejected') out.rejected += n;
+    else out.pending += n;
+  }
+  return out;
 }
