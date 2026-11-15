@@ -3,6 +3,7 @@ import ForgeReconciler, { BarChart, Box, Button, DynamicTable, Heading, xcss, In
 import React, { useCallback, useEffect, useState } from 'react';
 import type { Reply } from '../shared/panel';
 import type { RegisterRowView, RegisterView } from '../shared/register';
+import { moneyHeadline } from '../shared/register-text';
 
 /** The Covenant register: every obligation on contracts you can see, by due date. */
 
@@ -136,15 +137,8 @@ const App = () => {
         <Stack space="space.150">
           <Box xcss={headline}>
             <Stack space="space.050">
-              <Heading size="medium">
-                {view.money.totals.length > 0 ? view.money.totals.join(' and ') : view.money.contracts === 0 ? 'Nothing' : 'Value not confirmed'}
-              </Heading>
-              <Text>
-                {view.money.contracts === 0
-                  ? `No contract renews by itself with a notice deadline in the next ${view.money.days} days.`
-                  : `renews by itself unless notice is given in the next ${view.money.days} days, across ${view.money.contracts} contract${view.money.contracts === 1 ? '' : 's'}.`}
-                {view.money.unvalued > 0 ? ` ${view.money.unvalued} of them ${view.money.unvalued === 1 ? 'has' : 'have'} no confirmed value and ${view.money.unvalued === 1 ? 'is' : 'are'} not in the total.` : ''}
-              </Text>
+              <Heading size="medium">{moneyHeadline(view.money).heading}</Heading>
+              <Text>{moneyHeadline(view.money).text}</Text>
               {view.money.valuesAwaiting > 0 && (
                 <Text size="small">
                   {view.money.valuesAwaiting} contract value{view.money.valuesAwaiting === 1 ? ' is' : 's are'} waiting to be confirmed in the Covenant panel. Only confirmed values are

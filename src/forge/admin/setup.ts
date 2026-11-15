@@ -57,8 +57,10 @@ export async function oneClickSetup(accountId: string): Promise<SetupResult> {
   // 2. The work type. A failure here is not fatal: the sample contracts fall back to Task, and the note says so.
   let issueTypeId: string | null = null;
   let typeCreated = false;
+  let siteTypes: Awaited<ReturnType<typeof listIssueTypes>> = [];
   try {
-    const existing = (await listIssueTypes(req)).find((t) => t.name === CONTRACT_TYPE_NAME && !t.subtask && t.scope === undefined);
+    siteTypes = await listIssueTypes(req);
+    const existing = siteTypes.find((t) => t.name === CONTRACT_TYPE_NAME && !t.subtask && t.scope === undefined);
     const type = existing ?? (await createIssueType(req, CONTRACT_TYPE_NAME, 'A contract, with its file attached. Covenant reads the file and tracks its obligations.'));
     typeCreated = existing === undefined;
     issueTypeId = type.id;
@@ -69,6 +71,19 @@ export async function oneClickSetup(accountId: string): Promise<SetupResult> {
     notes.push(`The "${CONTRACT_TYPE_NAME}" work type could not be set up (${readableError(error, 'Jira refused')}), so sample contracts use Task.`);
   }
   await putJson(SETUP, { projectId: project.id, projectKey: project.key, issueTypeId } satisfies StoredSetup, accountId);
+
+  // 2b. The procurement template's only standard work type is "Order", so the sample's
+  // reviews and incidents would be Orders. Add the site's own Task type where it has one.
+  let taskAdded = false;
+  const task = siteTypes.find((t) => /^task$/i.test(t.name) && !t.subtask && t.scope === undefined);
+  if (task !== undefined) {
+    try {
+      taskAdded = await addIssueTypeToProject(req, project.id, task.id);
+      if (taskAdded) notes.push(`Added the Task work type to ${project.name}, for the related work in the sample workspace.`);
+    } catch (error) {
+      console.error(`setup task type failed project=${project.id} error=${loggableError(error)}`);
+    }
+  }
 
   // 3. The sample workspace, unless it is loaded or loading already.
   const sample = await getJson<SampleStatus>(SAMPLE_WORKSPACE);
@@ -83,8 +98,8 @@ export async function oneClickSetup(accountId: string): Promise<SetupResult> {
     sampleState = 'started';
   }
 
-  const changed = projectCreated || typeCreated || sampleState === 'started';
-  console.log(`setup project=${project.id} projectCreated=${projectCreated} typeCreated=${typeCreated} sample=${sampleState} changed=${changed}`);
+  const changed = projectCreated || typeCreated || taskAdded || sampleState === 'started';
+  console.log(`setup project=${project.id} projectCreated=${projectCreated} typeCreated=${typeCreated} taskAdded=${taskAdded} sample=${sampleState} changed=${changed}`);
   return {
     project: { key: project.key, name: project.name, created: projectCreated },
     workType: issueTypeId === null ? null : { name: CONTRACT_TYPE_NAME, created: typeCreated },

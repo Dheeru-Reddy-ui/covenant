@@ -1,4 +1,4 @@
-import { addBusinessDays } from './dates/business';
+import { addBusinessDays, rollToBusinessDay } from './dates/business';
 import { type IsoDate, addDays, compareDates } from './dates/civil';
 import { type HolidayList, WEEKENDS_ONLY, calendarOf, describeCalendar, holidayText, holidaysBetween } from './dates/holidays';
 import type { NoticeMethod } from './details';
@@ -58,9 +58,21 @@ export function sendByDates(deadline: IsoDate, methods: readonly MethodRule[], h
       return { method: m.method, label, latest: deadline, rule: 'Counts as received when it is delivered or sent.', steps: [`Notice deadline: ${deadline}`, `Received on the day it is sent: ${deadline}`] };
     }
     if (d.unit === 'business_day') {
-      const latest = addBusinessDays(deadline, -d.count, calendarOf(holidays));
-      const steps = [`Notice deadline: ${deadline}`, `${plural(d.count, 'business day')} before: ${latest}`, describeCalendar(holidays)];
-      const skipped = holidaysBetween(holidays, latest, deadline);
+      // A receipt counted in business days always lands on a business day, so on a weekend or holiday
+      // deadline the latest it can land is the business day before. Counting back from the deadline
+      // itself would give a send date whose receipt falls after it.
+      const calendar = calendarOf(holidays);
+      const receivedBy = rollToBusinessDay(deadline, 'preceding', calendar);
+      const latest = addBusinessDays(receivedBy, -d.count, calendar);
+      const steps = [`Notice deadline: ${deadline}`];
+      if (receivedBy !== deadline) {
+        const holiday = holidays.holidays.find((h) => h.date === deadline);
+        steps.push(
+          `${deadline} is not a business day${holiday?.label ? ` (${holiday.label})` : ''}, so the notice must count as received by ${receivedBy}, the last business day before it`,
+        );
+      }
+      steps.push(`${plural(d.count, 'business day')} before: ${latest}`, describeCalendar(holidays));
+      const skipped = holidaysBetween(holidays, latest, receivedBy);
       if (skipped.length > 0) steps.push(`Skipped ${skipped.map(holidayText).join(', ')}.`);
       return { method: m.method, label, latest, rule: `Counts as received ${plural(d.count, 'business day')} after sending.`, steps };
     }

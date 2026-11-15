@@ -1,7 +1,11 @@
+import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { parseHolidayList } from '../src/dates/holidays';
+import { addBusinessDays, isBusinessDay } from '../src/dates/business';
+import { compareDates } from '../src/dates/civil';
+import { calendarOf, parseHolidayList } from '../src/dates/holidays';
 import { DRAFT_BANNER, type NoticeDraftInput, draftAdf, draftNotice, draftText, earliestSendBy, sendByDates } from '../src/notice';
 import { adfText } from '../src/workitem';
+import { contractDateArb } from './arbitraries';
 
 const holidays = (text: string) => {
   const r = parseHolidayList('Port Ellery', text);
@@ -46,6 +50,50 @@ describe('sendByDates', () => {
 
   it('gives nothing for a contract with no notice methods', () => {
     expect(sendByDates(deadline, [])).toEqual([]);
+  });
+
+  it('counts back from the last business day when the deadline falls on a weekend', () => {
+    // Saturday 5 December 2026. A deemed receipt counted in business days always lands on a business day,
+    // so the latest it can land is Friday 4 December. Email sent on Friday counts as received on Monday: too late.
+    const [post, email] = sendByDates('2026-12-05', [
+      { method: 'registered_post', deemedReceipt: { count: 3, unit: 'business_day' } },
+      { method: 'email', deemedReceipt: { count: 1, unit: 'business_day' } },
+    ]);
+    expect(post?.latest).toBe('2026-12-01');
+    expect(email?.latest).toBe('2026-12-03');
+    expect(email?.steps).toEqual([
+      'Notice deadline: 2026-12-05',
+      '2026-12-05 is not a business day, so the notice must count as received by 2026-12-04, the last business day before it',
+      '1 business day before: 2026-12-03',
+      'Business days are Monday to Friday. No holidays are listed for this contract, so none are skipped.',
+    ]);
+  });
+
+  it('names the holiday when the deadline falls on one', () => {
+    const [email] = sendByDates('2026-12-25', [{ method: 'email', deemedReceipt: { count: 1, unit: 'business_day' } }], holidays('2026-12-25 Christmas Day'));
+    expect(email?.latest).toBe('2026-12-23');
+    expect(email?.steps[1]).toBe('2026-12-25 is not a business day (Christmas Day), so the notice must count as received by 2026-12-24, the last business day before it');
+  });
+
+  it('leaves a calendar-day rule alone on a weekend deadline: those receipts can fall on any day', () => {
+    const [courier] = sendByDates('2026-12-05', [{ method: 'courier', deemedReceipt: { count: 2, unit: 'day' } }]);
+    expect(courier?.latest).toBe('2026-12-03');
+  });
+
+  it('always gives the latest day that still counts as received in time', () => {
+    const holidayArb = fc.uniqueArray(contractDateArb, { maxLength: 12 }).map((dates) => ({ name: 'Generated', holidays: dates.map((date) => ({ date, label: '' })) }));
+    fc.assert(
+      fc.property(contractDateArb, fc.integer({ min: 1, max: 15 }), holidayArb, (due, n, list) => {
+        const calendar = calendarOf(list);
+        const [s] = sendByDates(due, [{ method: 'post', deemedReceipt: { count: n, unit: 'business_day' } }], list);
+        const latest = s?.latest as string;
+        // Sent on `latest`, it counts as received n business days later, on or before the deadline.
+        expect(isBusinessDay(latest, calendar)).toBe(true);
+        expect(compareDates(addBusinessDays(latest, n, calendar), due)).toBeLessThanOrEqual(0);
+        // Sent on the next business day, it would be late.
+        expect(compareDates(addBusinessDays(addBusinessDays(latest, 1, calendar), n, calendar), due)).toBeGreaterThan(0);
+      }),
+    );
   });
 });
 
