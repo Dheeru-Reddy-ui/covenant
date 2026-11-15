@@ -14,7 +14,8 @@ import { startSampleWorkspace } from './sample';
 
 export const SETUP = 'one_click_setup';
 export const SETUP_PROJECT_KEY = 'COVN';
-const PROJECT_NAME = 'Contracts';
+/** Tried in order; the first is used unless the site already has a project by that name. */
+const PROJECT_NAMES = ['Contracts', 'Contracts (Covenant)', 'Covenant contracts'] as const;
 export const CONTRACT_TYPE_NAME = 'Contract';
 const STALE_MS = 15 * 60 * 1000;
 
@@ -39,19 +40,29 @@ export async function oneClickSetup(accountId: string): Promise<SetupResult> {
   let project = stored ? await getProject(req, stored.projectId) : null;
   project ??= await getProject(req, SETUP_PROJECT_KEY);
   let projectCreated = false;
-  if (project === null) {
+  // Project names are unique in Jira, and a site may already have its own "Contracts".
+  for (const name of PROJECT_NAMES) {
+    if (project !== null) break;
     try {
       project = await createProject(req, {
         key: SETUP_PROJECT_KEY,
-        name: PROJECT_NAME,
+        name,
         description: 'Contracts tracked by Covenant: one work item per contract, with the contract file attached.',
         leadAccountId: accountId,
       });
       projectCreated = true;
+      if (name !== PROJECT_NAMES[0]) notes.push(`A project called "${PROJECT_NAMES[0]}" already exists, so the new one is called "${name}".`);
     } catch (error) {
       if (error instanceof JiraError && (error.status === 401 || error.status === 403)) throw new UserFacingError(NEEDS_PERMISSION);
-      throw error;
+      if (!(error instanceof JiraError && error.status === 400 && error.fields.includes('projectName'))) throw error;
     }
+  }
+  if (project === null) {
+    const names = PROJECT_NAMES.map((n) => `"${n}"`);
+    throw new UserFacingError(
+      `This site already has projects called ${names.slice(0, -1).join(', ')} and ${names.at(-1)}, so setup could not name a new one. ` +
+        'Use "Load sample workspace" below with a project of your own instead.',
+    );
   }
 
   // 2. The work type. A failure here is not fatal: the sample contracts fall back to Task, and the note says so.
@@ -73,16 +84,16 @@ export async function oneClickSetup(accountId: string): Promise<SetupResult> {
   await putJson(SETUP, { projectId: project.id, projectKey: project.key, issueTypeId } satisfies StoredSetup, accountId);
 
   // 2b. The procurement template's only standard work type is "Order", so the sample's
-  // reviews and incidents would be Orders. Add the site's own Task type where it has one.
+  // reviews and incidents would be Orders. Add a company-wide Task type: the site's own,
+  // or a new one, since a fresh site's only Task belongs to its first team-managed space.
   let taskAdded = false;
-  const task = siteTypes.find((t) => /^task$/i.test(t.name) && !t.subtask && t.scope === undefined);
-  if (task !== undefined) {
-    try {
-      taskAdded = await addIssueTypeToProject(req, project.id, task.id);
-      if (taskAdded) notes.push(`Added the Task work type to ${project.name}, for the related work in the sample workspace.`);
-    } catch (error) {
-      console.error(`setup task type failed project=${project.id} error=${loggableError(error)}`);
-    }
+  try {
+    const existing = siteTypes.find((t) => /^task$/i.test(t.name) && !t.subtask && t.scope === undefined);
+    const task = existing ?? (await createIssueType(req, 'Task', 'A piece of work to be done.'));
+    taskAdded = await addIssueTypeToProject(req, project.id, task.id);
+    if (taskAdded) notes.push(`Added the Task work type to ${project.name}, for the related work in the sample workspace.`);
+  } catch (error) {
+    console.error(`setup task type failed project=${project.id} error=${loggableError(error)}`);
   }
 
   // 3. The sample workspace, unless it is loaded or loading already.

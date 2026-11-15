@@ -34,6 +34,7 @@ vi.mock('../../src/forge/jira', () => {
     constructor(
       readonly status: number,
       message: string,
+      readonly fields: string[] = [],
     ) {
       super(message);
     }
@@ -43,6 +44,9 @@ vi.mock('../../src/forge/jira', () => {
     asUser: () => ({}),
     getProject: async (_req: unknown, idOrKey: string) => [...site.projects.values()].find((p) => p.id === idOrKey || p.key === idOrKey) ?? null,
     createProject: async (_req: unknown, p: { key: string; name: string }) => {
+      if ([...site.projects.values()].some((existing) => existing.name === p.name)) {
+        throw new JiraError(400, 'Jira refused creating the project: projectName: A project with that name already exists.', ['projectName']);
+      }
       const created = { id: String(site.nextId++), key: p.key, name: p.name };
       site.projects.set(created.id, created);
       site.inProject.set(created.id, ['order']);
@@ -118,12 +122,34 @@ describe('oneClickSetup', () => {
     expect(result.sample).toBe('already_loaded');
   });
 
-  it('skips Task when the site has no company-wide Task type', async () => {
+  it('picks another name when the site already has a project called Contracts', async () => {
+    site.projects.set('9', { id: '9', key: 'CON', name: 'Contracts' });
+    const result = await oneClickSetup('admin');
+    expect(result.project).toEqual({ key: 'COVN', name: 'Contracts (Covenant)', created: true });
+    expect(result.notes).toContain('A project called "Contracts" already exists, so the new one is called "Contracts (Covenant)".');
+    const again = await oneClickSetup('admin');
+    expect(again.project).toEqual({ key: 'COVN', name: 'Contracts (Covenant)', created: false });
+    expect(site.projects.size).toBe(2);
+  });
+
+  it('says what happened when every name it tries is taken', async () => {
+    site.projects.set('9', { id: '9', key: 'CON', name: 'Contracts' });
+    site.projects.set('10', { id: '10', key: 'CC', name: 'Contracts (Covenant)' });
+    site.projects.set('11', { id: '11', key: 'COV', name: 'Covenant contracts' });
+    await expect(oneClickSetup('admin')).rejects.toThrow(/already has projects called "Contracts", "Contracts \(Covenant\)" and "Covenant contracts"/);
+  });
+
+  it('creates a company-wide Task type when the site has only team-managed ones, as fresh sites do', async () => {
     site.types = site.types.filter((t) => t.id !== 'task');
     const result = await oneClickSetup('admin');
     const projectId = [...site.projects.values()][0]!.id;
+    const task = site.types.find((t) => t.name === 'Task' && t.scope === undefined);
+    expect(task).toBeDefined();
+    expect(site.inProject.get(projectId)).toContain(task!.id);
     expect(site.inProject.get(projectId)).not.toContain('team-task');
-    expect(result.notes.some((n) => n.includes('Task'))).toBe(false);
-    expect(result.workType?.created).toBe(true);
+    expect(result.notes).toContain('Added the Task work type to Contracts, for the related work in the sample workspace.');
+    expect(site.types.filter((t) => t.name === 'Task' && t.scope === undefined)).toHaveLength(1);
+    await oneClickSetup('admin');
+    expect(site.types.filter((t) => t.name === 'Task' && t.scope === undefined)).toHaveLength(1);
   });
 });
