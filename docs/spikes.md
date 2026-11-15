@@ -75,6 +75,17 @@ On `one-atlas-ykdi`:
 
 Result: a Forge agent cannot be assigned a work item today. The supported route is Jira Automation's "Use Rovo agent" action, which can run any agent, including Covenant's, when a "Decision due" item is created (`docs/automation.md`).
 
+## S9: are empty goals and teams real? (15 Nov 2026)
+
+On 15 Nov the renewal brief for MOBL-63 showed no goals and no teams, with no problems reported. To tell a real empty from a silent failure (a missing scope drops rows without an error), a positive control was set up on `one-atlas-ykdi`:
+
+- Goal TIDRWDEA-34 "Covenant test: renew supplier contracts on time", owned by Dheeru, linked to MOBL-63 from the goal's **Jira** tab (**Add Jira work item**, paste the work item link). The Contract work type has no Goals field on its layout, so the link was made from the goal.
+- Team "Covenant test: supplier management" (one member, Dheeru), linked to the Mobile Dev space from the team page (**Team links**, **Add Jira space**).
+
+Then `get_renewal_brief` over MCP for MOBL-63 returned `fromCache: false`, `problems: []`, the goal under `goals` (key, owner and link) and the team under `teams` (one member). The suggested owner scored 12: three assignments (3 each), goal owner (2) and team member (1); the team line was cut by the four-line evidence cap. `leftOutCreatedByCovenant: 2` shows the Decision due item and the insurance work item were left out of related work and owner scoring.
+
+Result: the earlier empty goals and teams were real (nothing was linked), not a silent failure. `jiraWorkItemGoals` and `atlassianTeamsBySpace` return data with Covenant's current scopes.
+
 ## Known unknowns
 
 - Whether production drops the `_development` suffix from tool names.
