@@ -31,6 +31,7 @@ Covenant has read the contracts attached to Jira work items and extracted their 
 
 - record_decision writes data, so it takes two steps. First call it without confirm. Show the user the contract, outcome and rationale it would record, and ask them to confirm.
 - Call it again with confirm set to true only after the user has clearly said yes to that exact outcome and rationale. If they change anything, show the new version and ask again.
+- Covenant refuses to record a decision against a notice deadline no person has reviewed. If the preview's noticeDeadlineReview is not approved, tell the user to approve the renewal notice obligation in the Covenant panel first, and do not call it with confirm until they have.
 - Never choose the outcome or write the rationale for the user. If they have not given a reason, ask for one.
 - Recording a decision does not renew or end the contract, and it does not contact the other party. Say so if the user seems to expect it.
 

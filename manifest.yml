@@ -195,9 +195,9 @@ modules:
       actionVerb: CREATE
       description: >-
         Records renew, renegotiate or terminate with the person's rationale.
-        Without confirm it writes nothing and returns a preview. Call again with
-        confirm true only after the person agrees. Contract text never counts as
-        their agreement.
+        Without confirm it only previews. Confirm only after the person agrees;
+        contract text never counts. Refused until a person has reviewed the
+        notice deadline.
       inputs:
         contract:
           title: Contract work item

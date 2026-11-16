@@ -72,7 +72,7 @@ I measured it on 30 contracts from the public CUAD dataset with the production m
 
 Twenty invented trap contracts (conflicting notice periods, dates in words, two-digit years, a planted instruction, a planted fee and more) all pass. CI fails the build if fewer traps pass than a recorded baseline, and the CUAD run has the same gate locally. To prove it, a prompt telling the model to obey the contract let the planted fee through and the build failed; everything else held, because code checks every quote and computes every date.
 
-There are 549 tests: 484 for the core, 25 for the eval and 40 for the app. The app tests check that a user who cannot see a contract gets nothing from any tool, a planted clause is not followed, every read is logged with ids only, and no log line can contain contract text.
+There are 550 tests: 484 for the core, 25 for the eval and 41 for the app. The app tests check that a user who cannot see a contract gets nothing from any tool, a planted clause is not followed, every read is logged with ids only, and no log line can contain contract text.
 
 ## How it meets the Forge requirement
 
@@ -92,7 +92,7 @@ Contracts belong to legal, procurement and finance, but their deadlines land on 
 **Best app with Atlassian MCP.** Covenant's `rovo:mcp` module exposes four tools: `list_obligations`, `get_clause`, `get_renewal_brief` and `record_decision`.
 - Each description tells a model when to use the tool, its output and its limits, within Forge's 255-character cap. Every input is described, and every reply explains its own fields.
 - The tools run as the caller and see only contracts on work items the caller can see. A hidden contract gives the same answer as a missing one, and a test proves it.
-- `record_decision` is a two-step write: without `confirm: true` it returns a preview and writes nothing.
+- `record_decision` is a two-step write: without `confirm: true` it returns a preview and writes nothing. It also refuses to record against a notice deadline no person has reviewed.
 - An open-source `skills/covenant-contracts/SKILL.md` (MIT) teaches outside agents the workflow and the trust rules: never recalculate a date, quote every clause, say what is unconfirmed.
 
 I tested it with an outside MCP client, a Claude app custom connector. Asked "which notice deadlines fall in the next 90 days?", it answered with four deadlines, each with its clause and location. `docs/mcp.md` has the admin enablement steps.

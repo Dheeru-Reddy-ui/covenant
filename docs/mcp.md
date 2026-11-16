@@ -7,7 +7,7 @@ Covenant exposes four tools. A Rovo agent inside Jira and any MCP client outside
 | `list_obligations` | Read | Lists obligations by due date, filtered by window, kind, contract, party or review status, with each clause quoted |
 | `get_clause` | Read | Returns the verbatim clause, its page and source links for one obligation |
 | `get_renewal_brief` | Read | Returns terms, the notice deadline, governing clauses, past decisions, the dates that move on renewal, related work and suggested owners |
-| `record_decision` | Write | Records a renew, renegotiate or terminate decision. It refuses unless called again with `confirm: true` |
+| `record_decision` | Write | Records a renew, renegotiate or terminate decision. It refuses unless called again with `confirm: true`, and until a person has reviewed the notice deadline |
 
 Every tool runs as the person calling it, and sees only contracts on work items that person can see in Jira. `test/forge/tools-access.test.ts` checks this for all four tools: a hidden contract gets the same answer as one that does not exist. Dates come from Covenant's tested date engine, never from a language model. [`skills/covenant-contracts/SKILL.md`](../skills/covenant-contracts/SKILL.md) teaches an outside agent how to use the tools.
 
@@ -87,7 +87,7 @@ Since 15 November 2026:
 
 Checked over MCP on 15 November 2026: `list_obligations` returned the new fields, and its three reads appeared in the access log under MCP.
 
-On 16 November 2026, on a never-used site with the production install, following only these steps: an admin enabled the tools, and a Claude custom connector chose that site on the consent screen. `list_obligations` answered the 90-day question with the sample's three notice deadlines, and `record_decision` without `confirm` returned `confirmation_required` with a preview and wrote nothing. Since then the preview's `noticeDeadlineReview` says whether a person has confirmed the deadline, and too short a rationale is refused with "give a reason of at least 10 characters".
+On 16 November 2026, on a never-used site with the production install, following only these steps: an admin enabled the tools, and a Claude custom connector chose that site on the consent screen. `list_obligations` answered the 90-day question with the sample's three notice deadlines, and `record_decision` without `confirm` returned `confirmation_required` with a preview and wrote nothing. Since then the preview's `noticeDeadlineReview` says whether a person has confirmed the deadline, a confirmed call is refused with `deadline_unreviewed` until a person approves the renewal notice obligation in the panel, and too short a rationale is refused with "give a reason of at least 10 characters".
 
 ## Notes
 

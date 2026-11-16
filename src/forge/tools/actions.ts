@@ -16,7 +16,7 @@ import type { ContextView } from '../../shared/panel';
 import { dueDateOf, scheduleFor, todayIn, todayUtc } from '../dates';
 import * as repo from '../db/repo';
 import { ensureSchema } from '../db/schema';
-import { buildBrief } from '../decisions/brief';
+import { buildBrief, noticeRulesOf } from '../decisions/brief';
 import { loadBundle, recordDecision } from '../decisions/actions';
 import { loadContext } from '../decisions/context';
 import { UserFacingError, loggableError } from '../errors';
@@ -337,8 +337,9 @@ export const recordDecisionTool = (payload: unknown, context: unknown) =>
     const { contract, issue } = await contractFor(request.issueKey, request.contractId);
     const [bundle, leadDays, base] = await Promise.all([loadBundle(issue.id, contract.id), getLeadDays(), siteBaseUrl(asUser())]);
     const brief = buildBrief({ ...bundle, today: todayUtc(), leadDays });
-    // Whether a person has confirmed the notice deadline the decision is taken against.
-    const reviews = bundle.obligations.filter((o) => o.rule.kind === 'renewal_notice' && o.decision !== 'rejected').map(reviewOf);
+    // Whether a person has confirmed the notice deadline the decision is taken against: the obligations that date it.
+    const dating = new Set(noticeRulesOf(bundle.obligations).map((r) => r.id));
+    const reviews = bundle.obligations.filter((o) => dating.has(o.id)).map(reviewOf);
     const noticeDeadlineReview: ReviewState | null =
       reviews.length === 0 ? null : reviews.every((r) => r === 'approved') ? 'approved' : reviews.includes('flagged') ? 'flagged' : 'awaiting_review';
     const decision = {
@@ -351,10 +352,12 @@ export const recordDecisionTool = (payload: unknown, context: unknown) =>
       noticeDeadlineReview,
       commentGoesOn: brief.decisionItemKey,
     };
-    const unconfirmed =
+    // A decision is never recorded against a date no person has checked: the panel shows the clause next to the date, chat may not.
+    const unreviewed =
       brief.window.deadline !== null && noticeDeadlineReview !== 'approved'
-        ? ` The notice deadline ${brief.window.deadline} has not been confirmed by a person (review: ${noticeDeadlineReview ?? 'none'}); say so, and suggest checking the renewal clause first.`
-        : '';
+        ? `the notice deadline ${brief.window.deadline} has not been confirmed by a person (review: ${noticeDeadlineReview ?? 'none'}). ` +
+          `Approve the renewal notice obligation in the Covenant panel on ${issue.key} first, after checking its date against the quoted clause, then try again.`
+        : null;
 
     if (!request.confirmed) {
       // A refusal: nothing was written, and the caller is told exactly how to proceed.
@@ -365,9 +368,27 @@ export const recordDecisionTool = (payload: unknown, context: unknown) =>
           recorded: false,
           refused: 'confirmation_required',
           wouldRecord: decision,
-          nextStep: `Nothing was recorded. Show the person this outcome and rationale and ask them to confirm.${unconfirmed} Only after they clearly say yes, call record_decision again with the same inputs and confirm set to true.`,
+          nextStep:
+            unreviewed === null
+              ? 'Nothing was recorded. Show the person this outcome and rationale and ask them to confirm. Only after they clearly say yes, call record_decision again with the same inputs and confirm set to true.'
+              : `Nothing was recorded, and it cannot be yet: ${unreviewed} Tell the person this; do not call record_decision with confirm until it is done.`,
         },
         counts: { recorded: false },
+      };
+    }
+
+    if (unreviewed !== null) {
+      return {
+        data: {
+          ok: false,
+          error: `Not recorded: ${unreviewed}`,
+          recorded: false,
+          refused: 'deadline_unreviewed',
+          noticeDeadline: brief.window.deadline,
+          noticeDeadlineReview,
+          nextStep: 'Nothing was recorded. Tell the person the notice deadline must be reviewed in the Covenant panel before a decision can be recorded against it.',
+        },
+        counts: { recorded: false, unreviewed: true },
       };
     }
 

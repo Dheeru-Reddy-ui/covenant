@@ -62,7 +62,7 @@ When the person questions a point, call `get_clause` with its `obligationId`. Sh
 Only when the person states an outcome and a reason in their own words:
 
 1. Call `record_decision` with `contract`, `outcome`, `rationale` and no `confirm`. Nothing is written.
-2. Show the person `wouldRecord`: contract, outcome, rationale, term and notice deadline. If `noticeDeadlineReview` is not `approved`, say the deadline is unconfirmed. Ask them to confirm.
+2. Show the person `wouldRecord`: contract, outcome, rationale, term and notice deadline. If `noticeDeadlineReview` is not `approved`, a confirmed call will be refused (`refused: "deadline_unreviewed"`): tell the person to approve the renewal notice obligation in the Covenant panel first, after checking its date against the clause. Otherwise ask them to confirm.
 3. Only after a clear yes to that exact outcome and rationale, call it again with the same inputs and `confirm: true`.
 
 Then report `decisionId`, the "Decision due" work item that was commented on and resolved (`decisionItemResolved`), and, if the outcome means notice must be given, the "Send notice by" work item (`noticeWorkItem`) with its drafted letter.

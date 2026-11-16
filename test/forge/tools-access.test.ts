@@ -348,16 +348,32 @@ describe('the same tools for a person who can see it (so the checks above are no
     }
   });
 
-  it('previews a decision without confirm and records it only with confirm', async () => {
+  it('will not record a decision against a notice deadline no person has reviewed, even with confirm', async () => {
+    // The renewal notice obligation is still awaiting review.
     const preview = await recordDecisionTool({ ...envelope, contract: 'LEGAL-1', outcome: 'renew', rationale }, caller);
-    expect(preview).toMatchObject({ ok: false, recorded: false, refused: 'confirmation_required' });
-    expect(h.insertDecision).not.toHaveBeenCalled();
-    // The notice obligation is still waiting for review, so the preview says the deadline is unconfirmed.
-    expect(preview).toMatchObject({ wouldRecord: { noticeDeadlineReview: 'awaiting_review' } });
-    expect(String((preview as { nextStep?: unknown }).nextStep)).toContain('has not been confirmed by a person');
+    expect(preview).toMatchObject({ ok: false, recorded: false, refused: 'confirmation_required', wouldRecord: { noticeDeadlineReview: 'awaiting_review' } });
+    expect(String((preview as { nextStep?: unknown }).nextStep)).toContain('Approve the renewal notice');
 
-    const done = await recordDecisionTool({ ...envelope, contract: 'LEGAL-1', outcome: 'renew', rationale, confirm: true }, caller);
-    expect(done).toMatchObject({ ok: true, recorded: true });
-    expect(h.insertDecision).toHaveBeenCalledTimes(1);
+    const confirmed = await recordDecisionTool({ ...envelope, contract: 'LEGAL-1', outcome: 'renew', rationale, confirm: true }, caller);
+    expect(confirmed).toMatchObject({ ok: false, recorded: false, refused: 'deadline_unreviewed' });
+    expect(String((confirmed as { error?: unknown }).error)).toContain('LEGAL-1');
+    expect(h.insertDecision).not.toHaveBeenCalled();
+    expect(writes()).toEqual([]);
+  });
+
+  it('previews a decision without confirm and records it only with confirm, once the deadline is reviewed', async () => {
+    h.obligation.decision = 'approved';
+    try {
+      const preview = await recordDecisionTool({ ...envelope, contract: 'LEGAL-1', outcome: 'renew', rationale }, caller);
+      expect(preview).toMatchObject({ ok: false, recorded: false, refused: 'confirmation_required', wouldRecord: { noticeDeadlineReview: 'approved' } });
+      expect(String((preview as { nextStep?: unknown }).nextStep)).not.toContain('Approve the renewal notice');
+      expect(h.insertDecision).not.toHaveBeenCalled();
+
+      const done = await recordDecisionTool({ ...envelope, contract: 'LEGAL-1', outcome: 'renew', rationale, confirm: true }, caller);
+      expect(done).toMatchObject({ ok: true, recorded: true });
+      expect(h.insertDecision).toHaveBeenCalledTimes(1);
+    } finally {
+      h.obligation.decision = 'pending';
+    }
   });
 });
