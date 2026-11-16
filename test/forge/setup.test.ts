@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const site = vi.hoisted(() => ({
   projects: new Map<string, { id: string; key: string; name: string }>(),
-  types: [] as Array<{ id: string; name: string; subtask?: boolean; scope?: unknown }>,
+  types: [] as Array<{ id: string; name: string; subtask?: boolean; hierarchyLevel?: number; scope?: unknown }>,
   inProject: new Map<string, string[]>(),
   stored: new Map<string, unknown>(),
   samplesStarted: [] as string[],
@@ -53,8 +53,8 @@ vi.mock('../../src/forge/jira', () => {
       return created;
     },
     listIssueTypes: async () => site.types,
-    createIssueType: async (_req: unknown, name: string) => {
-      const created = { id: String(site.nextId++), name };
+    createIssueType: async (_req: unknown, name: string, _description: string, hierarchyLevel = 0) => {
+      const created = { id: String(site.nextId++), name, subtask: hierarchyLevel === -1, hierarchyLevel };
       site.types.push(created);
       return created;
     },
@@ -74,8 +74,9 @@ beforeEach(() => {
   site.types = [
     { id: 'order', name: 'Order' },
     { id: 'task', name: 'Task' },
-    { id: 'sub', name: 'Subtask', subtask: true },
+    { id: 'sub', name: 'Subtask', subtask: true, hierarchyLevel: -1 },
     { id: 'team-task', name: 'Task', scope: { type: 'PROJECT' } },
+    { id: 'team-sub', name: 'Subtask', subtask: true, hierarchyLevel: -1, scope: { type: 'PROJECT' } },
   ];
   site.inProject.clear();
   site.stored.clear();
@@ -86,7 +87,7 @@ beforeEach(() => {
 });
 
 describe('oneClickSetup', () => {
-  it('on a fresh site creates the project and Contract type, adds Task for related work, and starts the samples', async () => {
+  it('on a fresh site creates the project and Contract type, adds Task and Subtask, and starts the samples', async () => {
     const result = await oneClickSetup('admin');
     expect(result.project).toEqual({ key: 'COVN', name: 'Contracts', created: true });
     expect(result.workType).toEqual({ name: 'Contract', created: true });
@@ -94,8 +95,9 @@ describe('oneClickSetup', () => {
     expect(result.changed).toBe(true);
     const projectId = [...site.projects.values()][0]!.id;
     const contract = site.types.find((t) => t.name === 'Contract')!;
-    expect(site.inProject.get(projectId)).toEqual(['order', contract.id, 'task']);
+    expect(site.inProject.get(projectId)).toEqual(['order', contract.id, 'task', 'sub']);
     expect(result.notes).toContain('Added the Task work type to Contracts, for the related work in the sample workspace.');
+    expect(result.notes).toContain('Added the Subtask work type to Contracts, so approved obligations and reminders can be created under each contract.');
     expect(site.samplesStarted).toEqual([projectId]);
   });
 
@@ -117,9 +119,33 @@ describe('oneClickSetup', () => {
     site.stored.set('sample_workspace', { status: 'done', projectKey: 'MOBL' });
     const result = await oneClickSetup('admin');
     expect(result.workType).toEqual({ name: 'Contract', created: false });
-    expect(site.inProject.get('7')).toEqual(['order', 'contract', 'task']);
+    expect(site.inProject.get('7')).toEqual(['order', 'contract', 'task', 'sub']);
     expect(result.changed).toBe(true);
     expect(result.sample).toBe('already_loaded');
+  });
+
+  it('adds Subtask to a project set up before Subtask was added, so a second click repairs it', async () => {
+    site.projects.set('7', { id: '7', key: 'COVN', name: 'Contracts' });
+    site.types.push({ id: 'contract', name: 'Contract' });
+    site.inProject.set('7', ['order', 'contract', 'task']);
+    site.stored.set('sample_workspace', { status: 'done', projectKey: 'COVN' });
+    const result = await oneClickSetup('admin');
+    expect(site.inProject.get('7')).toEqual(['order', 'contract', 'task', 'sub']);
+    expect(result.changed).toBe(true);
+    expect(result.notes).toContain('Added the Subtask work type to Contracts, so approved obligations and reminders can be created under each contract.');
+  });
+
+  it('creates a company-wide Subtask type when the site has only team-managed ones, as fresh sites do', async () => {
+    site.types = site.types.filter((t) => t.id !== 'sub');
+    await oneClickSetup('admin');
+    const projectId = [...site.projects.values()][0]!.id;
+    const companyWide = site.types.filter((t) => t.subtask === true && t.scope === undefined);
+    expect(companyWide).toHaveLength(1);
+    expect(companyWide[0]).toMatchObject({ name: 'Subtask', hierarchyLevel: -1 });
+    expect(site.inProject.get(projectId)).toContain(companyWide[0]!.id);
+    expect(site.inProject.get(projectId)).not.toContain('team-sub');
+    await oneClickSetup('admin');
+    expect(site.types.filter((t) => t.subtask === true && t.scope === undefined)).toHaveLength(1);
   });
 
   it('picks another name when the site already has a project called Contracts', async () => {

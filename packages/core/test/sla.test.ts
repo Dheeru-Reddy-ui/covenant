@@ -146,11 +146,10 @@ describe('creditAmount', () => {
 
 describe('draftClaim', () => {
   const base = {
-    contractTitle: 'Quillfeather MSA',
     fileName: 'sample-quillfeather-msa.docx',
     supplier: 'Quillfeather Systems BV',
-    commitment: { quote: 'Supplier shall ensure that no more than one (1) Severity 1 incident occurs in any calendar month.', where: 'clause 3.3, Word file' },
-    credit: { quote: 'Customer may claim a service credit of five percent (5%) of the monthly Fees for that month.', where: 'clause 3.4, Word file' },
+    commitment: { quote: 'Supplier shall ensure that no more than one (1) Severity 1 incident occurs in any calendar month.', where: 'clause 3.3, Word file', clause: 'clause 3.3' },
+    credit: { quote: 'Customer may claim a service credit of five percent (5%) of the monthly Fees for that month.', where: 'clause 3.4, Word file', clause: 'clause 3.4' },
     claimClause: { quote: 'Customer must claim a service credit within thirty (30) days after the end of the month.', where: 'clause 3.5, Word file' },
     breaches: [{ periodLabel: 'November 2026', workItems: ['CON-3', 'CON-9'], detail: '2 incidents in November 2026; the contract allows 1.', claimBy: '2026-12-30', claimOpen: true }],
     claimBy: '2026-12-30',
@@ -170,6 +169,18 @@ describe('draftClaim', () => {
     expect(text).toContain(base.credit.quote);
     expect(text).toContain('[amount: work it out from the formula above]');
     expect(text).not.toMatch(/EUR \d/);
+  });
+
+  it('the letter cites clauses as the contract numbers them, never Jira keys of the contract, file types or pages', () => {
+    const draft = draftClaim({ ...base, amount: null });
+    const letter = draft.lines.filter((l) => l.style === 'text' || l.style === 'heading').map((l) => l.text);
+    expect(letter).toContain('Subject: Service credit claim');
+    expect(letter).toContain('We refer to the agreement (sample-quillfeather-msa.docx). Under clause 3.3, you committed:');
+    expect(letter).toContain('Under clause 3.4, the agreement provides:');
+    expect(letter.join('\n')).not.toContain('Word file');
+    const bare = draftClaim({ ...base, amount: null, commitment: { ...base.commitment, clause: null }, credit: { ...base.credit, clause: null } });
+    expect(draftText(bare)).toContain('(sample-quillfeather-msa.docx). You committed:');
+    expect(draftText(bare)).toContain('\nThe agreement provides:');
   });
 });
 

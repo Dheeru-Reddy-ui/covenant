@@ -96,6 +96,22 @@ export async function oneClickSetup(accountId: string): Promise<SetupResult> {
     console.error(`setup task type failed project=${project.id} error=${loggableError(error)}`);
   }
 
+  // 2c. Approved obligations, Decision due reminders and notice items are created under
+  // the contract, which needs a subtask type in the project. The procurement scheme has
+  // none, and a fresh site's only Subtask types belong to its team-managed spaces.
+  let subtaskAdded = false;
+  try {
+    const existing = siteTypes.find((t) => (t.subtask === true || t.hierarchyLevel === -1) && t.scope === undefined);
+    const subtask = existing ?? (await createIssueType(req, 'Subtask', 'A smaller piece of work under another work item.', -1));
+    subtaskAdded = await addIssueTypeToProject(req, project.id, subtask.id);
+    if (subtaskAdded) notes.push(`Added the ${subtask.name} work type to ${project.name}, so approved obligations and reminders can be created under each contract.`);
+  } catch (error) {
+    console.error(`setup subtask type failed project=${project.id} error=${loggableError(error)}`);
+    notes.push(
+      `The Subtask work type could not be added to ${project.name} (${readableError(error, 'Jira refused')}), so approving an obligation there will fail until a Jira administrator adds one.`,
+    );
+  }
+
   // 3. The sample workspace, unless it is loaded or loading already.
   const sample = await getJson<SampleStatus>(SAMPLE_WORKSPACE);
   let sampleState: SetupResult['sample'];
@@ -109,8 +125,10 @@ export async function oneClickSetup(accountId: string): Promise<SetupResult> {
     sampleState = 'started';
   }
 
-  const changed = projectCreated || typeCreated || taskAdded || sampleState === 'started';
-  console.log(`setup project=${project.id} projectCreated=${projectCreated} typeCreated=${typeCreated} taskAdded=${taskAdded} sample=${sampleState} changed=${changed}`);
+  const changed = projectCreated || typeCreated || taskAdded || subtaskAdded || sampleState === 'started';
+  console.log(
+    `setup project=${project.id} projectCreated=${projectCreated} typeCreated=${typeCreated} taskAdded=${taskAdded} subtaskAdded=${subtaskAdded} sample=${sampleState} changed=${changed}`,
+  );
   return {
     project: { key: project.key, name: project.name, created: projectCreated },
     workType: issueTypeId === null ? null : { name: CONTRACT_TYPE_NAME, created: typeCreated },

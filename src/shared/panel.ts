@@ -182,6 +182,8 @@ export interface RunView {
   quotesVerified: number;
   rejectedCount: number;
   pages: number | null;
+  /** False for Word files, which have no fixed pages. */
+  paginated: boolean;
   terms: TermsView | null;
   facts: FactView[];
   obligations: ObligationView[];

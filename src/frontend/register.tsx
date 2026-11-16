@@ -147,14 +147,18 @@ const App = () => {
               )}
             </Stack>
           </Box>
-          <BarChart
-            data={view.load.map((m) => ({ month: m.label, deadlines: m.deadlines }))}
-            xAccessor="month"
-            yAccessor="deadlines"
-            title="Notice deadlines by month"
-            subtitle="The next twelve months, for contracts you can see"
-            height={260}
-          />
+          {view.load.some((m) => m.deadlines > 0) ? (
+            <BarChart
+              data={view.load.map((m) => ({ month: m.label, deadlines: m.deadlines }))}
+              xAccessor="month"
+              yAccessor="deadlines"
+              title="Notice deadlines by month"
+              subtitle="The next twelve months, for contracts you can see"
+              height={260}
+            />
+          ) : (
+            view.counts.contracts > 0 && <Text size="small">No notice deadlines fall in the next twelve months, so there is nothing to chart yet.</Text>
+          )}
           {view.load.some((m) => m.values.length > 0) && (
             <BarChart
               data={view.load.flatMap((m) => m.values.map((v) => ({ month: m.label, value: v.amount, currency: v.currency })))}

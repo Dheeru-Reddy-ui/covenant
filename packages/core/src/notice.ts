@@ -94,14 +94,15 @@ export function earliestSendBy(dates: readonly SendBy[]): IsoDate | null {
 
 export interface Cited {
   quote: string;
-  /** Where the quote sits, such as "clause 9.2 (Notices), page 7". */
+  /** Where the quote sits, such as "clause 9.2 (Notices), page 7". For the person sending. */
   where: string;
+  /** The numbered clause alone, such as "clause 9.2 (Notices)": what the letter itself cites. Null when code found no clause number. */
+  clause?: string | null;
 }
 
 export interface NoticeDraftInput {
   /** non_renewal: stop an automatic renewal or end the contract. renewal: exercise a renewal that does not happen by itself. */
   kind: 'non_renewal' | 'renewal';
-  contractTitle: string;
   fileName: string;
   deadline: IsoDate;
   termEnd: IsoDate | null;
@@ -151,11 +152,13 @@ export function draftNotice(input: NoticeDraftInput): NoticeDraft {
   lines.push({ style: 'text', text: senderName });
   lines.push({ style: 'heading', text: 'Date' });
   lines.push({ style: 'text', text: blank('date of sending') });
-  lines.push({ style: 'heading', text: `Subject: ${title}, ${input.contractTitle}` });
+  // The letter goes to the other party, so it names the agreement and its clause, never a Jira key, file type or page of our copy.
+  lines.push({ style: 'heading', text: `Subject: ${title} of the agreement between ${senderName} and ${recipientName}` });
 
   const agreement = `the agreement between ${senderName} and ${recipientName} (${input.fileName})`;
   if (input.renewalClause) {
-    lines.push({ style: 'text', text: `We refer to ${agreement}. Under ${input.renewalClause.where}, the agreement provides:` });
+    const clause = input.renewalClause.clause ?? null;
+    lines.push({ style: 'text', text: `We refer to ${agreement}. ${clause ? `Under ${clause}, the` : 'The'} agreement provides:` });
     lines.push({ style: 'quote', text: input.renewalClause.quote });
   } else {
     lines.push({ style: 'text', text: `We refer to ${agreement}.` });

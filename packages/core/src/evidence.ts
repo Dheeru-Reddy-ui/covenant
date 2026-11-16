@@ -23,7 +23,7 @@ import { DEFAULT_MIN_QUOTE_CHARS, type SourceDocument, locateQuote, normaliseWhi
  */
 
 /** Bump whenever this prompt, tool or its checks change. Stored on every check. */
-export const EVIDENCE_VERSION = 1;
+export const EVIDENCE_VERSION = 2;
 
 const RequirementReadingSchema = z.strictObject({
   requirement: z.string().min(1).max(240).describe('One thing the clause requires the document to show, as a plain sentence. One requirement per entry.'),
@@ -348,6 +348,12 @@ export async function checkEvidence(clause: EvidenceClause, evidence: SourceDocu
     }
   } else if (certificate) add('party_missing');
 
+  // Code has shown the line naming the party names the wrong one, so a "met" resting on that line is not met.
+  if (party?.matches === false) {
+    const partyLine = normaliseWhitespace(party.quote);
+    for (const f of findings) if (f.result === 'met' && f.evidenceQuote !== null && normaliseWhitespace(f.evidenceQuote) === partyLine) f.result = 'not_met';
+  }
+
   if (findings.length === 0) add('nothing_checked');
   if (evidence.pages.some((p) => instructionSigns(p.text).length > 0)) add('document_reads_like_instruction');
 
@@ -378,8 +384,8 @@ export const CHASE_BANNER = 'Draft for a person to review before sending. Covena
 export interface ChaseInput {
   fileName: string;
   contractTitle: string;
-  /** Where the clause is, in words: "clause 9.1 (Insurance), page 6". */
-  clauseLocation: string;
+  /** The numbered clause, such as "clause 9.1 (Insurance)", or null when code found none. The message goes to the supplier, so no file type or page of our copy. */
+  clause: string | null;
   /** False for Word files, whose quotes have no page. */
   paginated: boolean;
   findings: EvidenceFinding[];
@@ -401,12 +407,13 @@ export function draftChase(input: ChaseInput): string[] {
       ? input.party
       : null;
   if (gaps.length === 0 && expired === null && wrongParty === null) return [];
+  const what = input.clause ? `${input.clause} of ${input.contractTitle}` : `the requirements of ${input.contractTitle}`;
   const lines = [
     CHASE_BANNER,
     '',
-    `Subject: ${input.fileName} does not yet meet ${input.clauseLocation} of ${input.contractTitle}`,
+    `Subject: ${input.fileName} does not yet meet ${what}`,
     '',
-    `Thank you for sending ${input.fileName}. We checked it against ${input.clauseLocation} of ${input.contractTitle}, and it does not yet show what the clause requires:`,
+    `Thank you for sending ${input.fileName}. We checked it against ${what}, and it does not yet show what the contract requires:`,
     '',
   ];
   let n = 0;

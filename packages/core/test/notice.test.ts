@@ -98,13 +98,16 @@ describe('sendByDates', () => {
 });
 
 describe('draftNotice', () => {
-  const renewal = { quote: 'This Agreement renews automatically unless either party gives written notice of non-renewal at least ninety (90) days before the end of the then-current term.', where: 'clause 1.2 (Term and renewal), Word file' };
+  const renewal = {
+    quote: 'This Agreement renews automatically unless either party gives written notice of non-renewal at least ninety (90) days before the end of the then-current term.',
+    where: 'clause 1.2 (Term and renewal), Word file',
+    clause: 'clause 1.2 (Term and renewal)',
+  };
   const address = { party: 'Supplier', quote: 'Notices to Supplier must be sent to Quillfeather Systems BV, Kade 14, 3011 Port Ellery.', where: 'clause 5.1 (General), Word file' };
   const [sendBy] = sendByDates('2026-12-02', [{ method: 'registered_post', deemedReceipt: { count: 3, unit: 'business_day' } }]);
   if (!sendBy) throw new Error('no send-by');
   const input: NoticeDraftInput = {
     kind: 'non_renewal',
-    contractTitle: 'Quillfeather Systems route planning MSA',
     fileName: 'sample-quillfeather-msa.docx',
     deadline: '2026-12-02',
     termEnd: '2027-03-02',
@@ -127,6 +130,18 @@ describe('draftNotice', () => {
     expect(text).toContain('By registered post: send by 2026-11-27.');
     expect(text).toContain('The notice must be received by 2026-12-02.');
     expect(text).toContain('Tallowmere Freight Ltd');
+  });
+
+  it('the letter itself names the agreement and the clause, never Jira keys, file types or pages', () => {
+    const draft = draftNotice(input);
+    const letter = draft.lines.filter((l) => l.style === 'text' || l.style === 'heading').map((l) => l.text);
+    expect(letter).toContain('Subject: Notice of non-renewal of the agreement between Tallowmere Freight Ltd and Quillfeather Systems BV');
+    expect(letter.join('\n')).toContain('Under clause 1.2 (Term and renewal), the agreement provides:');
+    expect(letter.join('\n')).not.toMatch(/Word file|page \d/);
+    // Without a numbered clause the letter quotes the provision without a location.
+    const bare = draftNotice({ ...input, renewalClause: { quote: renewal.quote, where: 'Word file (no page numbers)', clause: null } });
+    expect(draftText(bare)).toContain('(sample-quillfeather-msa.docx). The agreement provides:');
+    expect(draftText(bare)).not.toContain('Under Word file');
   });
 
   it('leaves the address blank and says so when the contract has no notices clause', () => {

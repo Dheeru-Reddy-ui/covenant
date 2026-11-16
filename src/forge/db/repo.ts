@@ -716,6 +716,23 @@ export async function listLatestReviewableRuns(): Promise<RunRow[]> {
   return [...latest.values()];
 }
 
+/** The status of the newest extraction run for each of these work items that has one, by work item key. */
+export async function latestRunStatusByIssueKey(keys: readonly string[]): Promise<Map<string, RunStatus>> {
+  const out = new Map<string, { status: RunStatus; version: number; at: number }>();
+  if (keys.length === 0) return new Map();
+  const rows = await select(
+    `SELECT c.issue_key, r.status, r.extractor_version, c.created_at_ms FROM contract c JOIN extraction_run r ON r.contract_id = c.id WHERE c.issue_key IN (${marks(keys.length)})`,
+    ...keys,
+  );
+  for (const row of rows) {
+    const key = String(row.issue_key);
+    const next = { status: String(row.status) as RunStatus, version: num(row.extractor_version), at: num(row.created_at_ms) };
+    const seen = out.get(key);
+    if (seen === undefined || next.at > seen.at || (next.at === seen.at && next.version > seen.version)) out.set(key, next);
+  }
+  return new Map([...out].map(([k, v]) => [k, v.status]));
+}
+
 async function inChunks<T>(ids: readonly string[], load: (chunk: string[]) => Promise<T[]>): Promise<T[]> {
   const out: T[] = [];
   for (let i = 0; i < ids.length; i += 100) out.push(...(await load(ids.slice(i, i + 100))));

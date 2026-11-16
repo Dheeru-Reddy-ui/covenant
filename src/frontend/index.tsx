@@ -310,7 +310,7 @@ function RunPanel({
       {(run.status === 'needs_review' || run.status === 'approved') && (
         <Stack space="space.200">
           <Text size="small">
-            Read {run.pages ?? '?'} pages
+            {!run.paginated ? 'Read the Word file' : run.pages === null ? 'Read the file' : `Read ${run.pages} page${run.pages === 1 ? '' : 's'}`}
             {took !== null ? ` in ${seconds(took)}` : ''} with {run.model}: {run.llmCalls} model {run.llmCalls === 1 ? 'call' : 'calls'}, {run.inputTokens.toLocaleString('en')}{' '}
             input and {run.outputTokens.toLocaleString('en')} output tokens. {run.quotesVerified} of {run.quotesReturned} quotes were found word for word in the contract
             {run.rejectedCount > 0 ? `; ${run.rejectedCount} items without a matching quote were dropped` : ''}.

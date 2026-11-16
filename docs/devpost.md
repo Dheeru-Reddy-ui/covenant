@@ -72,7 +72,7 @@ I measured it on 30 contracts from the public CUAD dataset with the production m
 
 Twenty invented trap contracts (conflicting notice periods, dates in words, two-digit years, a planted instruction, a planted fee and more) all pass. CI fails the build if fewer traps pass than a recorded baseline, and the CUAD run has the same gate locally. To prove it, a prompt telling the model to obey the contract let the planted fee through and the build failed; everything else held, because code checks every quote and computes every date.
 
-There are 529 tests: 477 for the core, 25 for the eval and 27 for the app. The app tests check that a user who cannot see a contract gets nothing from any tool, a planted clause is not followed, every read is logged with ids only, and no log line can contain contract text.
+There are 549 tests: 484 for the core, 25 for the eval and 40 for the app. The app tests check that a user who cannot see a contract gets nothing from any tool, a planted clause is not followed, every read is logged with ids only, and no log line can contain contract text.
 
 ## How it meets the Forge requirement
 
@@ -140,5 +140,6 @@ Atlassian Forge, Forge LLMs (Claude Haiku 4.5), Forge SQL, async events, UI Kit,
 [Paste the "Install and try it" section of the README here, and add:]
 
 - You need to be a site admin to install. Rovo is optional. An organization admin is needed only to expose the MCP tools to outside clients.
-- One-click setup creates its own Contracts project, so it works on an empty site. The sample workspace instead needs one Jira project you can create work items in.
+- One-click setup creates its own Contracts project, so it works on an empty site; if a Contracts project already exists, the new one is called "Contracts (Covenant)". The sample workspace instead needs one Jira project you can create work items in.
+- The install screen asks to manage Jira configuration. Only one-click setup uses it, to create its project and add the Contract, Task and Subtask work types. Every permission is explained in PRIVACY.md.
 - Model usage is billed to the developer, so judges pay nothing.

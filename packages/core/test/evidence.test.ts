@@ -99,6 +99,19 @@ describe('checkEvidence', () => {
     expect(outcome.reasons).toContain('party_mismatch');
   });
 
+  it('a "met" that rests on the line naming the wrong party is not met, so the findings never contradict each other', async () => {
+    const other = 'Insured: Quillfeather Holdings Ltd, as named in the policy schedule.';
+    const issued = req({ requirement: 'The certificate must be issued to the Supplier.', clauseQuote: 'Supplier shall maintain professional indemnity insurance', evidenceQuote: ` ${other}` });
+    const { outcome } = await run(doc(E.title, other, E.cover, E.period), answer({ namedParty: { nameText: 'Quillfeather Holdings Ltd', quote: other, page: null }, requirements: [req(), issued] }));
+    expect(outcome.verdict).toBe('fail');
+    expect(outcome.findings[0]).toMatchObject({ result: 'met', evidenceQuote: E.cover });
+    expect(outcome.findings[1]).toMatchObject({ result: 'not_met', review: [] });
+    // With the right party on that line, the model's "met" stands.
+    const right = await run(GOOD, answer({ requirements: [req(), req({ ...issued, evidenceQuote: E.insured })] }));
+    expect(right.outcome.verdict).toBe('pass');
+    expect(right.outcome.findings[1]?.result).toBe('met');
+  });
+
   it('needs review when a certificate names no one, has no expiry, or the party to expect is unknown', async () => {
     expect((await run(GOOD, answer({ namedParty: null }))).outcome.reasons).toContain('party_missing');
     expect((await run(GOOD, answer({ validUntil: null }))).outcome).toMatchObject({ verdict: 'needs_review', reasons: ['expiry_missing'] });
@@ -179,10 +192,9 @@ describe('checkEvidence', () => {
 describe('draftChase', () => {
   it('quotes the clause and the document for each gap and is labelled a draft', async () => {
     const { outcome } = await run(doc(E.title, E.insured, E.low, E.period), answer({ requirements: [req({ result: 'not_met', evidenceQuote: E.low }), req({ requirement: 'Names Customer.', clauseQuote: 'provide Customer with a certificate of insurance', result: 'not_shown', evidenceQuote: null })] }), '2027-03-01');
-    const text = draftChase({ fileName: 'certificate.pdf', contractTitle: 'Quillfeather MSA', clauseLocation: 'clause 9.1 (Insurance), page 6', paginated: true, findings: outcome.findings, expiry: outcome.expiry, party: { nameText: 'Quillfeather Holdings Ltd', quote: E.insured, page: 1, expected: 'Quillfeather Systems BV', matches: false } }).join('\n');
+    const text = draftChase({ fileName: 'certificate.pdf', contractTitle: 'Quillfeather MSA', clause: 'clause 9.1 (Insurance)', paginated: true, findings: outcome.findings, expiry: outcome.expiry, party: { nameText: 'Quillfeather Holdings Ltd', quote: E.insured, page: 1, expected: 'Quillfeather Systems BV', matches: false } }).join('\n');
     expect(text).toMatch(/^Draft/);
-    expect(text).toContain('certificate.pdf');
-    expect(text).toContain('clause 9.1 (Insurance), page 6');
+    expect(text).toContain('Subject: certificate.pdf does not yet meet clause 9.1 (Insurance) of Quillfeather MSA');
     expect(text).toContain(`"${req().clauseQuote}"`);
     expect(text).toContain(`"${E.low}"`);
     expect(text).toContain('does not mention');
@@ -193,13 +205,14 @@ describe('draftChase', () => {
   it('does not repeat the wrong party when a requirement already quotes that line', async () => {
     const party = { nameText: 'Quillfeather Holdings Ltd', quote: E.insured, page: 1, expected: 'Quillfeather Systems BV', matches: false };
     const finding = { requirement: 'Issued to the Supplier.', clauseQuote: 'Supplier shall maintain', result: 'not_met' as const, evidenceQuote: E.insured, evidencePage: 1, confidence: 'high' as const, review: [] };
-    const text = draftChase({ fileName: 'c.pdf', contractTitle: 'T', clauseLocation: 'page 1', paginated: true, findings: [finding], expiry: null, party }).join(String.fromCharCode(10));
+    const text = draftChase({ fileName: 'c.pdf', contractTitle: 'T', clause: null, paginated: true, findings: [finding], expiry: null, party }).join(String.fromCharCode(10));
+    expect(text).toContain('Subject: c.pdf does not yet meet the requirements of T');
     expect(text).toContain('Issued to the Supplier.');
     expect(text).not.toContain('is issued to Quillfeather Holdings Ltd');
   });
 
   it('is empty when nothing failed', async () => {
     const { outcome } = await run(GOOD, answer());
-    expect(draftChase({ fileName: 'c.pdf', contractTitle: 'T', clauseLocation: 'page 1', paginated: true, findings: outcome.findings, expiry: outcome.expiry })).toEqual([]);
+    expect(draftChase({ fileName: 'c.pdf', contractTitle: 'T', clause: null, paginated: true, findings: outcome.findings, expiry: outcome.expiry })).toEqual([]);
   });
 });

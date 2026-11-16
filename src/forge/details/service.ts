@@ -248,7 +248,7 @@ export async function setSupplierJql(bundle: Bundle, jql: string, accountId: str
 }
 
 /** The drafted notice for the decision in force, built from confirmed and unrejected details. */
-export async function noticeDraft(bundle: Bundle, brief: BriefView, kind: NoticeDraftInput['kind'], issueTitle: string): Promise<{ draft: NoticeDraftView; text: string; sendBy: IsoDate | null }> {
+export async function noticeDraft(bundle: Bundle, brief: BriefView, kind: NoticeDraftInput['kind']): Promise<{ draft: NoticeDraftView; text: string; sendBy: IsoDate | null }> {
   const details = live(await repo.listDetails(bundle.run.id));
   const ourLabel = await repo.getContractSetting<string>(bundle.contract.id, OUR_PARTY);
   const parties = details.filter((d) => d.kind === 'party').map((d) => d.data as PartyData);
@@ -266,13 +266,12 @@ export async function noticeDraft(bundle: Bundle, brief: BriefView, kind: Notice
   const renewal = brief.clauses[0];
   const draft = draftNotice({
     kind,
-    contractTitle: issueTitle,
     fileName: bundle.contract.fileName,
     deadline,
     termEnd: brief.window.termEnd,
     sender,
     recipient,
-    renewalClause: renewal ? { quote: renewal.clause.quote, where: whereOf(renewal.clause) } : null,
+    renewalClause: renewal ? { quote: renewal.clause.quote, where: whereOf(renewal.clause), clause: renewal.clause.section } : null,
     addresses: (forRecipient.length > 0 ? forRecipient : addressRows).map((d) => ({ party: (d.data as NoticeAddressData).party, quote: d.quote, where: whereOf(clauseOf(d, bundle.run.paginated)) })),
     methods: methodRows.flatMap((d, i) => {
       const s = sendBy[i];
@@ -294,7 +293,7 @@ export async function ensureNoticeItem(bundle: Bundle, brief: BriefView, kind: N
   try {
     const req = asUser();
     const parent = await getIssue(req, bundle.contract.issueId);
-    const { draft, sendBy } = await noticeDraft(bundle, brief, kind, parent.key);
+    const { draft, sendBy } = await noticeDraft(bundle, brief, kind);
     const type = await childIssueType(req, parent);
     const due = sendBy ?? brief.window.deadline;
     const created = await createChild(req, {
@@ -428,7 +427,7 @@ export async function supplierRecord(bundle: Bundle, brief: BriefView, today: Is
 }
 
 /** Opens a "Claim service credit by" work item with the drafted claim, once per breach, on a person's click. */
-export async function openClaimItem(bundle: Bundle, brief: BriefView, today: IsoDate, detailId: string, key: string, issueTitle: string): Promise<{ key: string; created: boolean }> {
+export async function openClaimItem(bundle: Bundle, brief: BriefView, today: IsoDate, detailId: string, key: string): Promise<{ key: string; created: boolean }> {
   await ownedDetail(bundle, detailId);
   const setting = claimItemSetting(detailId, key);
   const existing = await repo.getContractSetting<string>(bundle.contract.id, setting);
@@ -443,12 +442,14 @@ export async function openClaimItem(bundle: Bundle, brief: BriefView, today: Iso
   const details = live(await repo.listDetails(bundle.run.id));
   const ourLabel = await repo.getContractSetting<string>(bundle.contract.id, OUR_PARTY);
   const others = details.filter((d) => d.kind === 'party').map((d) => d.data as PartyData).filter((p) => ourLabel !== null && p.label !== ourLabel);
-  const cite = (c: StoredCitation) => ({ quote: c.quote, where: whereOf(clauseOf(c, bundle.run.paginated)) });
+  const cite = (c: Parameters<typeof clauseOf>[0]) => {
+    const clause = clauseOf(c, bundle.run.paginated);
+    return { quote: c.quote, where: whereOf(clause), clause: clause.section };
+  };
   const draft = draftClaim({
-    contractTitle: issueTitle,
     fileName: bundle.contract.fileName,
     supplier: others.length === 1 ? (others[0]?.name ?? null) : null,
-    commitment: { quote: m.detail.quote, where: whereOf(clauseOf(m.detail, bundle.run.paginated)) },
+    commitment: cite(m.detail),
     credit: m.sl.credit ? cite(m.sl.credit) : null,
     claimClause: m.sl.claim ? cite(m.sl.claim) : null,
     breaches: [breach],

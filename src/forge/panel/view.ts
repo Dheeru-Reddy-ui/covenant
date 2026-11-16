@@ -239,6 +239,7 @@ async function runView(run: repo.RunRow, contract: repo.ContractRow, today: stri
     quotesVerified: run.quotesVerified,
     rejectedCount: run.rejectedCount,
     pages: run.pages,
+    paginated: run.paginated,
     terms: reviewable ? termsView(run.terms, run.autoRenew, contract, today) : null,
     facts: reviewable ? factViews(run, byId) : [],
     obligations: views,

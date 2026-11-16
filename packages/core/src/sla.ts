@@ -179,13 +179,19 @@ export function creditAmount(credit: Pick<CreditTerms, 'percent' | 'of' | 'per'>
   return { minor: Math.round((base * credit.percent) / 100) * times, currency: yearlyFee.currency };
 }
 
+/** A quote with where it sits for the person sending ("clause 3.2 (Service levels), page 4") and the numbered clause the letter itself cites, when code found one. */
+interface ClaimCitation {
+  quote: string;
+  where: string;
+  clause?: string | null;
+}
+
 export interface ClaimDraftInput {
-  contractTitle: string;
   fileName: string;
   supplier: string | null;
-  commitment: { quote: string; where: string };
-  credit: { quote: string; where: string } | null;
-  claimClause: { quote: string; where: string } | null;
+  commitment: ClaimCitation;
+  credit: ClaimCitation | null;
+  claimClause: ClaimCitation | null;
   breaches: Breach[];
   amount: Money | null;
   claimBy: IsoDate | null;
@@ -195,13 +201,15 @@ export interface ClaimDraftInput {
 export function draftClaim(input: ClaimDraftInput): { title: string; lines: DraftLine[] } {
   const lines: DraftLine[] = [{ style: 'banner', text: 'DRAFT FOR REVIEW. Covenant wrote this from the contract and from Jira. It has not been sent, and it is not legal advice.' }];
   lines.push({ style: 'heading', text: `To: ${input.supplier ?? '[supplier, as named in the contract]'}` });
-  lines.push({ style: 'heading', text: `Subject: Service credit claim, ${input.contractTitle}` });
-  lines.push({ style: 'text', text: `We refer to the agreement (${input.fileName}). Under ${input.commitment.where}, you committed:` });
+  // The letter goes to the supplier: it cites clauses as the contract numbers them, never our Jira key for the contract, a file type or a page of our copy.
+  const under = (c: ClaimCitation, rest: string): string => (c.clause ? `Under ${c.clause}, ${rest}` : rest.charAt(0).toUpperCase() + rest.slice(1));
+  lines.push({ style: 'heading', text: 'Subject: Service credit claim' });
+  lines.push({ style: 'text', text: `We refer to the agreement (${input.fileName}). ${under(input.commitment, 'you committed:')}` });
   lines.push({ style: 'quote', text: input.commitment.quote });
   lines.push({ style: 'text', text: 'Our records show this commitment was not met:' });
   for (const b of input.breaches) lines.push({ style: 'text', text: `- ${b.detail} Work items: ${b.workItems.join(', ')}.` });
   if (input.credit) {
-    lines.push({ style: 'text', text: `Under ${input.credit.where}, the agreement provides:` });
+    lines.push({ style: 'text', text: under(input.credit, 'the agreement provides:') });
     lines.push({ style: 'quote', text: input.credit.quote });
     lines.push({
       style: 'text',

@@ -270,7 +270,7 @@ resolver.define('details.noticeDraft', ({ payload, context }) =>
     const caller = callerOf(context);
     const { contractId, kind, timeZone } = parse(DraftPayload, payload);
     const { bundle, brief } = await briefOf(caller.issueId, contractId, timeZone);
-    return (await noticeDraft(bundle, brief, kind, bundle.contract.issueKey)).draft;
+    return (await noticeDraft(bundle, brief, kind)).draft;
   }),
 );
 
@@ -288,7 +288,7 @@ resolver.define('details.openClaim', ({ payload, context }) =>
     const caller = callerOf(context);
     const { contractId, detailId, breachKey, timeZone } = parse(ClaimPayload, payload);
     const { bundle, brief, today } = await briefOf(caller.issueId, contractId, timeZone);
-    return openClaimItem(bundle, brief, today, detailId, breachKey, bundle.contract.issueKey);
+    return openClaimItem(bundle, brief, today, detailId, breachKey);
   }),
 );
 

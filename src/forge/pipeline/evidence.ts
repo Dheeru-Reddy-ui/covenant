@@ -10,9 +10,9 @@ import {
   type PartyData,
   PRODUCTION_MODEL,
   checkEvidence,
-  clauseLocation,
   describeSection,
   draftChase,
+  normaliseWhitespace,
   textAround,
 } from '../../../packages/core/src';
 import { UnsupportedDocumentError, parseDocument, sha256Hex } from '../../parse/document';
@@ -294,20 +294,12 @@ export async function evidenceJob(checkId: string): Promise<void> {
     }
 
     const issueTitle = (await issueHeader(asApp(), b.contract.issueId).catch(() => null))?.summary || b.contract.issueKey;
-    const location = b.clause
-      ? clauseLocation({
-          page: b.clause.page,
-          pageEnd: b.clause.pageEnd,
-          paginated: b.run.paginated,
-          section: b.clause.section,
-        })
-      : 'the contract';
     const chase =
       outcome.verdict === 'fail'
         ? draftChase({
             fileName: check.fileName,
             contractTitle: issueTitle,
-            clauseLocation: location,
+            clause: b.clause?.section ? describeSection(b.clause.section) : null,
             paginated: parsed.paginated,
             findings: outcome.findings,
             expiry: outcome.expiry,
@@ -363,6 +355,10 @@ export async function evidenceJob(checkId: string): Promise<void> {
 
 function checkView(c: repo.EvidenceCheckRow): EvidenceCheckView {
   const r = (c.result ?? null) as StoredResult | null;
+  const gaps = (r?.findings ?? []).filter((f) => f.result !== 'met');
+  // As in the chase draft: a gap that already quotes the line naming the wrong party says it; the party point is not repeated.
+  const partyLine = r?.party?.matches === false ? normaliseWhitespace(r.party.quote) : null;
+  const partySaid = partyLine !== null && gaps.some((f) => f.evidenceQuote !== null && normaliseWhitespace(f.evidenceQuote) === partyLine);
   return {
     id: c.id,
     attachmentId: c.attachmentId,
@@ -380,7 +376,11 @@ function checkView(c: repo.EvidenceCheckRow): EvidenceCheckView {
     })),
     expiry: r?.expiry ?? null,
     party: r?.party ?? null,
-    reasons: (r?.reasons ?? []).map(reasonText),
+    // The summary lists every gap: requirements the document falls short of or leaves out, then the checks code made.
+    reasons: [
+      ...gaps.map((f) => `${f.result === 'not_met' ? 'Not met' : 'Not shown'}: ${f.requirement}`),
+      ...(r?.reasons ?? []).filter((code) => !(partySaid && code === 'party_mismatch')).map(reasonText),
+    ],
     chase: r?.chase ?? [],
     error: c.error,
     source: c.source,

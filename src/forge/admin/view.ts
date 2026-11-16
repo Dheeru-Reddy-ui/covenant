@@ -12,6 +12,15 @@ import { APP_ID } from './preflight';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** Shown as "(extraction ...)" beside each sample contract. */
+const RUN_LABELS: Record<repo.RunStatus, string> = {
+  queued: 'queued',
+  running: 'running',
+  needs_review: 'done, ready for review',
+  approved: 'done',
+  failed: 'failed',
+};
+
 /** The admin page lives in Jira settings, but its resolvers check for themselves that the caller is a Jira administrator. */
 export async function requireAdmin(): Promise<void> {
   if (!(await isJiraAdmin(asUser()))) throw new UserFacingError("Only Jira administrators can use Covenant's admin page.");
@@ -29,6 +38,14 @@ export async function loadAdmin(): Promise<AdminView> {
     repo.listAccess(50),
     repo.countAccessByChannel(Date.now() - 30 * DAY_MS),
   ]);
+  // The sample status records what happened when it was loaded; show each extraction as it stands now.
+  if (sample !== null && sample.contracts.length > 0) {
+    const runs = await repo.latestRunStatusByIssueKey(sample.contracts.map((c) => c.key));
+    sample.contracts = sample.contracts.map((c) => {
+      const status = runs.get(c.key);
+      return status === undefined ? c : { ...c, extraction: RUN_LABELS[status] };
+    });
+  }
   return {
     leadDays,
     minLeadDays: MIN_DECISION_LEAD_DAYS,

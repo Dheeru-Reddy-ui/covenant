@@ -44,7 +44,8 @@ async function call<T>(key: string, payload?: Record<string, unknown>): Promise<
 
 const stamp = (ms: number): string => `${new Date(ms).toISOString().replace('T', ' ').slice(0, 16)} UTC`;
 
-function Preflight() {
+/** `refresh` changes when something the checks report on has changed, such as a manual daily check. */
+function Preflight({ refresh }: { refresh: number }) {
   const [checks, setChecks] = useState<PreflightCheck[] | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -59,7 +60,7 @@ function Preflight() {
   }, []);
   useEffect(() => {
     void run();
-  }, [run]);
+  }, [run, refresh]);
 
   return (
     <Box xcss={card}>
@@ -125,7 +126,7 @@ function Settings({ view, reload }: { view: AdminView; reload: () => void }) {
   );
 }
 
-function DailyCheck({ view, reload }: { view: AdminView; reload: () => void }) {
+function DailyCheck({ view, reload, onRan }: { view: AdminView; reload: () => void; onRan: () => void }) {
   const [running, setRunning] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const run = async () => {
@@ -137,7 +138,10 @@ function DailyCheck({ view, reload }: { view: AdminView; reload: () => void }) {
         ? `Checked ${reply.data.contracts} contracts: ${reply.data.due} with a decision due (${reply.data.decided ?? 0} already decided), ${reply.data.opened.length} decision items opened${reply.data.opened.length ? ` (${reply.data.opened.join(', ')})` : ''}, ${reply.data.failed} failed.`
         : reply.error,
     );
-    if (reply.ok) reload();
+    if (reply.ok) {
+      reload();
+      onRan();
+    }
   };
   const last = view.lastDailyRun;
   return (
@@ -328,7 +332,8 @@ function Quality({ view }: { view: AdminView }) {
         <Heading size="xsmall">On this site</Heading>
         <Stack space="space.050">
           <Text>
-            <Strong>Approved without any edit:</Strong> {pct(approvals.unedited, approvals.approved)} of approved obligations.
+            <Strong>Approved without any edit:</Strong>{' '}
+            {approvals.approved === 0 ? 'no obligation has been approved yet.' : `${pct(approvals.unedited, approvals.approved)} of approved obligations.`}
           </Text>
           <Text>
             {approvals.rejected} rejected and {approvals.pending} still waiting for review.
@@ -391,6 +396,8 @@ const App = () => {
     void load();
   }, [load]);
   const reload = useCallback(() => void load(), [load]);
+  const [preflightRefresh, setPreflightRefresh] = useState(0);
+  const dailyRan = useCallback(() => setPreflightRefresh((n) => n + 1), []);
 
   if (error) {
     return (
@@ -402,10 +409,10 @@ const App = () => {
   if (view === null) return <Spinner />;
   return (
     <Stack space="space.300">
-      <Preflight />
+      <Preflight refresh={preflightRefresh} />
       <OneClickSetup reload={reload} />
       <SampleWorkspace view={view} reload={reload} />
-      <DailyCheck view={view} reload={reload} />
+      <DailyCheck view={view} reload={reload} onRan={dailyRan} />
       <Quality view={view} />
       <AccessLog view={view} />
       <Settings view={view} reload={reload} />

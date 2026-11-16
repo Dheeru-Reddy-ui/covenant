@@ -172,7 +172,11 @@ export async function childIssueType(req: Requester, parent: IssueInfo): Promise
   const candidates = types.filter((t) => (t.hierarchyLevel ?? (t.subtask ? -1 : 0)) === childLevel);
   const pick = candidates.find((t) => /^(sub-?task|task)$/i.test(t.name)) ?? candidates[0];
   if (pick === undefined) {
-    throw new JiraError(400, `this project has no work type that can sit under a ${parent.issueType.name}`);
+    throw new JiraError(
+      400,
+      `Jira refused creating a work item under ${parent.key}: its project has no work type that can sit under a ${parent.issueType.name}. ` +
+        "A Jira administrator can add a Subtask work type to the project's work type scheme; for Covenant's own Contracts project, clicking Set up Covenant again on the admin page does it",
+    );
   }
   return { id: pick.id, name: pick.name };
 }
@@ -461,11 +465,12 @@ export async function listIssueTypes(req: Requester): Promise<Array<IssueTypeRes
   return (await response.json()) as Array<IssueTypeResponse & { scope?: unknown }>;
 }
 
-export async function createIssueType(req: Requester, name: string, description: string): Promise<IssueTypeResponse> {
+/** A site-wide work type: hierarchy level 0 for a standard type, -1 for a subtask type. */
+export async function createIssueType(req: Requester, name: string, description: string, hierarchyLevel: 0 | -1 = 0): Promise<IssueTypeResponse> {
   const response = await req.requestJira(route`/rest/api/3/issuetype`, {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, description, hierarchyLevel: 0 }),
+    body: JSON.stringify({ name, description, hierarchyLevel }),
   });
   if (!response.ok) throw await failure(response, `creating the "${name}" work type`);
   return (await response.json()) as IssueTypeResponse;

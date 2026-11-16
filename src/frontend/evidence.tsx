@@ -77,8 +77,8 @@ function CheckResult({ check, clauseWhereText, runAction }: { check: EvidenceChe
       {check.error && <Text>{check.error}</Text>}
       {check.reasons.length > 0 && (
         <Stack space="space.050">
-          {check.reasons.map((r) => (
-            <Text key={r}>• {r}</Text>
+          {check.reasons.map((r, i) => (
+            <Text key={`${i}-${r}`}>• {r}</Text>
           ))}
         </Stack>
       )}

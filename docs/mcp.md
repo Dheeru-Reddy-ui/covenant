@@ -13,8 +13,8 @@ Every tool runs as the person calling it, and sees only contracts on work items 
 
 ## Before you start
 
-1. Install Covenant on your Jira site. Approving its permissions during install may need an organization admin, because Covenant reads Teamwork Graph.
-2. Load some contracts. On Covenant's admin page (Jira settings, then Apps, then Covenant), click **Load sample workspace** and pick a project. It adds three fictional contracts and extracts them, which takes a minute or two.
+1. Install Covenant on your Jira site, as in the README's [Install and try it](../README.md#install-and-try-it-about-10-minutes).
+2. Load some contracts. On Covenant's admin page (Jira **Settings**, **Marketplace apps**, then **Covenant** under **Apps** in the sidebar), click **Set up Covenant** under **One-click setup**. It creates a Contracts project with three fictional contracts and extracts them, which takes a minute or two. To use a project of your own instead, pick it under **Sample workspace** and click **Load sample workspace**.
 
 ## Use the Rovo agent (inside Jira)
 

@@ -11,6 +11,18 @@ Questions or deletion requests: open an issue at https://github.com/Dheeru-Reddy
 - **Incidents for a contract's supplier, when a person opens the supplier record.** Covenant runs the contract's JQL filter as that person and reads each matching work item's created and resolved dates.
 - **Jira work items and Teamwork Graph data, when a person opens a renewal brief's context.** This covers linked and child work items, goals, teams and their members, and who commented on related work. Covenant reads it as that person, so it sees only what they can see.
 
+## Permissions
+
+| Permission | What Covenant uses it for |
+| --- | --- |
+| `read:jira-work` | Reading the work item a contract is attached to, downloading contract and certificate files, and running a contract's supplier filter. |
+| `write:jira-work` | Creating the work items and comments a person asks for (approved obligations, notice and claim items, chase drafts, the sample workspace), and the Decision due reminders the daily check opens. |
+| `read:graph:issue:jira`, `read:graph:issue-status:jira`, `read:graph:user:atlassian`, `read:graph:goal:atlassian`, `read:graph:team:atlassian`, `read:graph:issue-comment:jira`, `read:graph:project:jira` | Teamwork Graph, as the person viewing a renewal brief: related work, goals, teams, and who worked on what, for suggested owners. |
+| `manage:jira-configuration` | One-click setup only: creating the Contracts project and adding the Contract, Task and Subtask work types to it, as the Jira administrator who clicks it. Nothing else uses it. |
+| `report:personal-data` | Atlassian's personal data reporting API, described below. |
+
+Covenant also uses Forge LLMs (Atlassian-hosted Claude) and Forge SQL, which need no permission. A site admin can turn off the app's access to Atlassian-hosted AI models, and Covenant's preflight says if it has been.
+
 ## What Covenant stores
 
 Covenant keeps its data in Forge SQL, Atlassian's hosted storage for the app's installation on your site:
