@@ -33,8 +33,8 @@ The agent answers in date order and quotes the clause behind each deadline.
 Covenant's MCP tools are off until an admin turns them on, separately for each site. Atlassian's guide says this needs an organization admin.
 
 1. Go to [Atlassian Administration](https://admin.atlassian.com) and select your organization.
-2. In the sidebar, choose **Apps**, then **Sites**, then your site, then **Connected apps**.
-3. Find **covenant** in the list and, under **Actions**, choose **View app details**.
+2. Open your site's **Connected apps** list. In the sidebar, choose **Apps**. If it lists **Sites**, choose **Sites**, then your site, then **Connected apps**. If it doesn't, choose **Atlassian apps** and click **Looking for your Marketplace and third-party apps?**, which opens **Connected apps** for your site.
+3. Find **Covenant** in the list of installed apps and choose **View app details**.
 4. Scroll to the **TOOLS** section, labelled *Expose tools to MCP-compatible apps*, and click **Enable tools**. It is one switch for all four tools.
 5. Reload the page. The section should say **Enabled**, and its button should now read **Disable tools**.
 
@@ -86,6 +86,8 @@ Since 15 November 2026:
 - Each read is written to Covenant's AI access log (account id, time, channel and obligation id, never text), which Jira admins see on the admin page. A call over MCP is logged as "MCP", and one from Rovo chat as "Rovo agent".
 
 Checked over MCP on 15 November 2026: `list_obligations` returned the new fields, and its three reads appeared in the access log under MCP.
+
+On 16 November 2026, on a never-used site with the production install, following only these steps: an admin enabled the tools, and a Claude custom connector chose that site on the consent screen. `list_obligations` answered the 90-day question with the sample's three notice deadlines, and `record_decision` without `confirm` returned `confirmation_required` with a preview and wrote nothing. Since then the preview's `noticeDeadlineReview` says whether a person has confirmed the deadline, and too short a rationale is refused with "give a reason of at least 10 characters".
 
 ## Notes
 

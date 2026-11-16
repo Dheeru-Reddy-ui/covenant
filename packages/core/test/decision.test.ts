@@ -142,6 +142,8 @@ describe('parseDecisionInput', () => {
 
   it('needs a real rationale and a known outcome', () => {
     expect(parseDecisionInput({ outcome: 'renew', rationale: 'ok' }).ok).toBe(false);
+    // The problem names the rule exactly, so a person or an agent can fix it on the first try.
+    expect(parseDecisionInput({ outcome: 'renew', rationale: 'MCP test' })).toEqual({ ok: false, problems: ['rationale: give a reason of at least 10 characters'] });
     expect(parseDecisionInput({ outcome: 'extend', rationale: 'A long enough reason.' }).ok).toBe(false);
     expect(parseDecisionInput(null).ok).toBe(false);
   });

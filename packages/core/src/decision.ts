@@ -142,7 +142,7 @@ export function rolloverPreview(
 
 const DecisionInputSchema = z.strictObject({
   outcome: z.enum(DECISION_OUTCOMES),
-  rationale: z.string().trim().min(10, 'say why in at least a sentence').max(4000),
+  rationale: z.string().trim().min(10, 'give a reason of at least 10 characters').max(4000),
 });
 
 export type DecisionInput = z.infer<typeof DecisionInputSchema>;

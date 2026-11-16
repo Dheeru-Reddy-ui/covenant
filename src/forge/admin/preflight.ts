@@ -20,6 +20,9 @@ export const APP_ID = '0eb73671-31a0-4410-ae90-4d8ba0607caa';
 export const MCP_ENDPOINT = `https://mcp.atlassian.com/forge/${APP_ID}`;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** Administration's menus differ between organisations, so both routes to a site's Connected apps are given. */
+const CONNECTED_APPS_PATH =
+  "open this site's Connected apps (Apps, then Sites, this site, Connected apps; or Apps, then Atlassian apps, then \"Looking for your Marketplace and third-party apps?\")";
 
 async function check(key: string, title: string, run: () => Promise<Omit<PreflightCheck, 'key' | 'title'>>): Promise<PreflightCheck> {
   try {
@@ -59,8 +62,7 @@ export async function runPreflight(accountId: string): Promise<PreflightCheck[]>
       return {
         status: 'fail',
         detail: `${PRODUCTION_MODEL} is not offered on this site.`,
-        fix:
-          'In Atlassian Administration, open Apps, then Sites, this site, Connected apps, Covenant, and check that "Access to Atlassian-hosted AI models" is on.',
+        fix: `In Atlassian Administration, ${CONNECTED_APPS_PATH}, choose Covenant, and check that "Access to Atlassian-hosted AI models" is on.`,
       };
     }),
 
@@ -116,7 +118,7 @@ export async function runPreflight(accountId: string): Promise<PreflightCheck[]>
     check('mcp', 'MCP server exposure', async () => ({
       status: 'manual',
       detail: `Covenant cannot see from inside the app whether an admin has exposed its tools. Its MCP endpoint is ${MCP_ENDPOINT}.`,
-      fix: 'In Atlassian Administration, open Apps, then Sites, this site, Connected apps, Covenant, then TOOLS, and click Enable tools. Reload and check it says Enabled.',
+      fix: `In Atlassian Administration, ${CONNECTED_APPS_PATH}, choose Covenant, then under TOOLS click Enable tools. Reload and check it says Enabled.`,
     })),
 
     check('rovo', 'Rovo', async () => ({

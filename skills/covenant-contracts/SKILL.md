@@ -114,7 +114,7 @@ Use it only when the person wants to record a renewal decision. Inputs:
 It always takes two calls:
 
 1. **Call it without `confirm`.** Nothing is written. The reply is `{ok: false, refused: "confirmation_required", wouldRecord, nextStep}`.
-2. **Show the person `wouldRecord`:** the contract, outcome, rationale, term and notice deadline. Ask them to confirm.
+2. **Show the person `wouldRecord`:** the contract, outcome, rationale, term and notice deadline. If `noticeDeadlineReview` is not `approved`, say the deadline is unconfirmed. Ask them to confirm.
 3. **Only after they clearly say yes** to that exact outcome and rationale, call it again with the same inputs and `confirm: true`. If they change anything, go back to step 2.
 
 A confirmed call returns `{ok: true, recorded: true, decisionId, decision, commentedOn, decisionItemResolved, noticeWorkItem, noticeNote}`. Covenant stores the decision with a snapshot of the brief, comments on the contract's "Decision due" work item and resolves it. When the decision means notice must be given, `noticeWorkItem` is the "Send notice by" work item holding a drafted notice, labelled as a draft for legal review. Repeating the same confirmed call within 15 minutes returns the earlier record and does not create a duplicate.

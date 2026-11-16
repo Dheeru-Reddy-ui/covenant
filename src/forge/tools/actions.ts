@@ -25,7 +25,7 @@ import { detailsView, supplierRecord } from '../details/service';
 import { loadPortfolio, moneyView } from '../register/view';
 import { getLeadDays } from '../settings';
 import { OUTCOME_LABELS, undatedText } from '../text';
-import { type ToolResult, browseUrl, citationOut, contractFor, contractOut, expectInput, isoDay, reviewOf, runTool, viewLocation } from './common';
+import { type ReviewState, type ToolResult, browseUrl, citationOut, contractFor, contractOut, expectInput, isoDay, reviewOf, runTool, viewLocation } from './common';
 
 /**
  * The four tools behind the Rovo agent and the MCP server. Three read and one
@@ -337,6 +337,10 @@ export const recordDecisionTool = (payload: unknown, context: unknown) =>
     const { contract, issue } = await contractFor(request.issueKey, request.contractId);
     const [bundle, leadDays, base] = await Promise.all([loadBundle(issue.id, contract.id), getLeadDays(), siteBaseUrl(asUser())]);
     const brief = buildBrief({ ...bundle, today: todayUtc(), leadDays });
+    // Whether a person has confirmed the notice deadline the decision is taken against.
+    const reviews = bundle.obligations.filter((o) => o.rule.kind === 'renewal_notice' && o.decision !== 'rejected').map(reviewOf);
+    const noticeDeadlineReview: ReviewState | null =
+      reviews.length === 0 ? null : reviews.every((r) => r === 'approved') ? 'approved' : reviews.includes('flagged') ? 'flagged' : 'awaiting_review';
     const decision = {
       contract: contractOut(contract, issue, base),
       outcome: request.outcome,
@@ -344,8 +348,13 @@ export const recordDecisionTool = (payload: unknown, context: unknown) =>
       rationale: request.rationale,
       term: brief.termNumber,
       noticeDeadline: brief.window.deadline,
+      noticeDeadlineReview,
       commentGoesOn: brief.decisionItemKey,
     };
+    const unconfirmed =
+      brief.window.deadline !== null && noticeDeadlineReview !== 'approved'
+        ? ` The notice deadline ${brief.window.deadline} has not been confirmed by a person (review: ${noticeDeadlineReview ?? 'none'}); say so, and suggest checking the renewal clause first.`
+        : '';
 
     if (!request.confirmed) {
       // A refusal: nothing was written, and the caller is told exactly how to proceed.
@@ -356,8 +365,7 @@ export const recordDecisionTool = (payload: unknown, context: unknown) =>
           recorded: false,
           refused: 'confirmation_required',
           wouldRecord: decision,
-          nextStep:
-            'Nothing was recorded. Show the person this outcome and rationale and ask them to confirm. Only after they clearly say yes, call record_decision again with the same inputs and confirm set to true.',
+          nextStep: `Nothing was recorded. Show the person this outcome and rationale and ask them to confirm.${unconfirmed} Only after they clearly say yes, call record_decision again with the same inputs and confirm set to true.`,
         },
         counts: { recorded: false },
       };

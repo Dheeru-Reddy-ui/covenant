@@ -352,6 +352,9 @@ describe('the same tools for a person who can see it (so the checks above are no
     const preview = await recordDecisionTool({ ...envelope, contract: 'LEGAL-1', outcome: 'renew', rationale }, caller);
     expect(preview).toMatchObject({ ok: false, recorded: false, refused: 'confirmation_required' });
     expect(h.insertDecision).not.toHaveBeenCalled();
+    // The notice obligation is still waiting for review, so the preview says the deadline is unconfirmed.
+    expect(preview).toMatchObject({ wouldRecord: { noticeDeadlineReview: 'awaiting_review' } });
+    expect(String((preview as { nextStep?: unknown }).nextStep)).toContain('has not been confirmed by a person');
 
     const done = await recordDecisionTool({ ...envelope, contract: 'LEGAL-1', outcome: 'renew', rationale, confirm: true }, caller);
     expect(done).toMatchObject({ ok: true, recorded: true });
