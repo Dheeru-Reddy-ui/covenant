@@ -27,7 +27,7 @@ import type { BriefView, ClauseView } from '../../shared/panel';
 import type { Bundle } from '../decisions/actions';
 import * as repo from '../db/repo';
 import { UserFacingError, loggableError, readableError } from '../errors';
-import { type FoundIssue, JiraError, asUser, childIssueType, createChild, getIssue, searchIssues } from '../jira';
+import { type FoundIssue, JiraError, asUser, childIssueType, createChild, editIssue, getIssue, searchIssues } from '../jira';
 import type { StoredCitation } from '../pipeline/details';
 
 /**
@@ -300,7 +300,7 @@ export async function ensureNoticeItem(bundle: Bundle, brief: BriefView, kind: N
       projectId: parent.projectId,
       parentKey: parent.key,
       issueTypeId: type.id,
-      summary: `Send notice by ${due}: ${draft.title.toLowerCase()} for ${bundle.contract.fileName}`.slice(0, 250),
+      summary: noticeSummary(due, draft.title, bundle.contract.fileName),
       description: draftAdf(draft),
       dueDate: due,
     });
@@ -312,6 +312,27 @@ export async function ensureNoticeItem(bundle: Bundle, brief: BriefView, kind: N
     console.error(`notice item failed contract=${bundle.contract.id} error=${loggableError(error)}`);
     return { key: null, created: false, note: `The "Send notice" work item could not be opened: ${readableError(error, 'Jira refused')}.` };
   }
+}
+
+const noticeSummary = (due: IsoDate, title: string, fileName: string): string => `Send notice by ${due}: ${title.toLowerCase()} for ${fileName}`.slice(0, 250);
+
+/**
+ * Puts the current letter on this term's "Send notice by" work item, on a
+ * person's click, as that person. The letter is drafted when the item opens;
+ * since then a person may have confirmed other parties or delivery methods,
+ * which move the send-by date, or Covenant's wording may have changed. The
+ * kind follows ensureNoticeItem: notice of non-renewal for a contract that
+ * renews by itself, notice to renew for one that does not.
+ */
+export async function refreshNoticeItem(bundle: Bundle, brief: BriefView): Promise<{ key: string; dueDateSet: boolean }> {
+  const key = await repo.getContractSetting<string>(bundle.contract.id, noticeItemSetting(bundle.contract.termIndex));
+  if (key === null) throw new UserFacingError('This term has no "Send notice by" work item to update.');
+  const { draft, sendBy } = await noticeDraft(bundle, brief, bundle.run.autoRenew ? 'non_renewal' : 'renewal');
+  const due = sendBy ?? brief.window.deadline;
+  if (due === null) throw new UserFacingError('This contract has no dated notice deadline yet, so there is nothing to draft a notice against.');
+  const { dueDateSet } = await editIssue(asUser(), key, { summary: noticeSummary(due, draft.title, bundle.contract.fileName), description: draftAdf(draft), duedate: due });
+  console.log(`notice item refreshed contract=${bundle.contract.id} term=${bundle.contract.termIndex} workItem=${key} dueDateSet=${dueDateSet}`);
+  return { key, dueDateSet };
 }
 
 const isIncident = (i: FoundIssue): boolean => /incident|bug|problem/i.test(i.issueType) || i.labels.some((l) => l.toLowerCase() === 'incident');

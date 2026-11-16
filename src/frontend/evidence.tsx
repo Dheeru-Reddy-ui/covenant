@@ -218,18 +218,19 @@ export function EvidenceSection({ view, busy, runAction }: { view: EvidenceView;
               {a.tooLarge ? (
                 <Text size="small">Too large: Covenant reads files up to 15 MB.</Text>
               ) : (
-                (a.check === null || a.check.status === 'failed') && (
+                (a.check === null || a.check.status === 'failed' || a.check.outdated) && (
                   <LoadingButton
                     appearance={a.check === null ? 'primary' : 'default'}
                     isLoading={busy === 'action:evidence.check'}
                     isDisabled={busy !== null}
                     onClick={() => void runAction('evidence.check', { attachmentId: a.id }, () => `Checking ${a.fileName} against the clause.`)}
                   >
-                    {a.check === null ? 'Check against the clause' : 'Try again'}
+                    {a.check === null ? 'Check against the clause' : a.check.outdated ? 'Check again' : 'Try again'}
                   </LoadingButton>
                 )
               )}
             </Inline>
+            {a.check?.outdated && <Text size="small">Checked under an earlier version of Covenant’s rules. Check again to see the result under the current ones.</Text>}
             {a.check && <CheckResult check={a.check} clauseWhereText={clauseWhereText} runAction={runAction} />}
           </Stack>
         </Box>

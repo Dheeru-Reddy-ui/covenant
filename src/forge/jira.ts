@@ -237,6 +237,31 @@ export async function createChild(req: Requester, child: ChildRequest): Promise<
   return { ...created, dueDateSet: edit.ok };
 }
 
+/**
+ * Edits a work item's fields, as the caller. As in createChild, a project whose
+ * edit screen leaves Due date off makes Jira reject it; then the rest is saved
+ * without it.
+ */
+export async function editIssue(req: Requester, issueKey: string, fields: Record<string, unknown>): Promise<{ dueDateSet: boolean }> {
+  const put = async (body: Record<string, unknown>) => {
+    const response = await req.requestJira(route`/rest/api/3/issue/${issueKey}`, {
+      method: 'PUT',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields: body }),
+    });
+    if (!response.ok) throw await failure(response, `editing ${issueKey}`);
+  };
+  try {
+    await put(fields);
+    return { dueDateSet: 'duedate' in fields };
+  } catch (error) {
+    if (!('duedate' in fields && error instanceof JiraError && error.status === 400 && error.fields.includes('duedate'))) throw error;
+  }
+  const { duedate: _dropped, ...rest } = fields;
+  await put(rest);
+  return { dueDateSet: false };
+}
+
 export async function updateDueDate(req: Requester, issueKey: string, dueDate: IsoDate | null): Promise<void> {
   const response = await req.requestJira(route`/rest/api/3/issue/${issueKey}`, {
     method: 'PUT',

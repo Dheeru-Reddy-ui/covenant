@@ -38,6 +38,8 @@ export interface EvidenceCheckView {
   commented: boolean;
   /** False for Word files: their quotes have no page. */
   paginated: boolean;
+  /** Finished under an earlier version of Covenant's evidence rules; a person can check the file again under the current ones. */
+  outdated: boolean;
 }
 
 export interface EvidenceView {

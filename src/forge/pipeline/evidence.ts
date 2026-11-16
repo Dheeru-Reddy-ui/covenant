@@ -387,6 +387,7 @@ function checkView(c: repo.EvidenceCheckRow): EvidenceCheckView {
     finishedAtMs: c.finishedAtMs,
     commented: c.commentedBy !== null,
     paginated: r?.paginated ?? true,
+    outdated: c.evidenceVersion < EVIDENCE_VERSION && (c.status === 'done' || c.status === 'failed'),
   };
 }
 

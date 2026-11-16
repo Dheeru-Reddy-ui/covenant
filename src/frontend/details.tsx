@@ -168,9 +168,24 @@ function Notices({ contractId, details, brief, run, busy }: { contractId: string
           </Button>
         </Inline>
         {details.noticeItemKey && (
-          <Text>
-            Notice work item, with the drafted letter: <Link href={`/browse/${details.noticeItemKey}`}>{details.noticeItemKey}</Link>
-          </Text>
+          <Inline space="space.100" alignBlock="center" shouldWrap>
+            <Text>
+              Notice work item, with the drafted letter: <Link href={`/browse/${details.noticeItemKey}`}>{details.noticeItemKey}</Link>
+            </Text>
+            <Button
+              spacing="compact"
+              appearance="subtle"
+              isDisabled={busy || details.deadline === null}
+              onClick={() =>
+                void run('details.refreshNoticeItem', { contractId, timeZone: timeZone() }, (data) => {
+                  const r = data as { key: string; dueDateSet: boolean };
+                  return `Put the current letter and send-by date on ${r.key}.${r.dueDateSet ? '' : ' Its due date could not be set: that work type leaves Due date off its edit screen.'}`;
+                })
+              }
+            >
+              Update the letter
+            </Button>
+          </Inline>
         )}
         {details.deadline !== null && liveMethods.length > 0 && (
           <Text>

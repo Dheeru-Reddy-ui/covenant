@@ -8,7 +8,7 @@ import { oneClickSetup } from './admin/setup';
 import { loadAdmin, requireAdmin } from './admin/view';
 import { loadBundle, markRenewed, moveWorkItemDates, recordDecision, setCalendar, undoRenewal } from './decisions/actions';
 import { buildBrief } from './decisions/brief';
-import { decideDetail, noticeDraft, openClaimItem, setOurParty, setSupplierJql, supplierRecord } from './details/service';
+import { decideDetail, noticeDraft, openClaimItem, refreshNoticeItem, setOurParty, setSupplierJql, supplierRecord } from './details/service';
 import { queueDetails } from './pipeline/details';
 import { todayIn } from './dates';
 import { loadContext } from './decisions/context';
@@ -271,6 +271,16 @@ resolver.define('details.noticeDraft', ({ payload, context }) =>
     const { contractId, kind, timeZone } = parse(DraftPayload, payload);
     const { bundle, brief } = await briefOf(caller.issueId, contractId, timeZone);
     return (await noticeDraft(bundle, brief, kind)).draft;
+  }),
+);
+
+// A person's click: the letter on the "Send notice by" work item is rewritten from the contract as it reads now.
+resolver.define('details.refreshNoticeItem', ({ payload, context }) =>
+  answer('details.refreshNoticeItem', async () => {
+    const caller = callerOf(context);
+    const { contractId, timeZone } = parse(ViewerContractPayload, payload);
+    const { bundle, brief } = await briefOf(caller.issueId, contractId, timeZone);
+    return refreshNoticeItem(bundle, brief);
   }),
 );
 
