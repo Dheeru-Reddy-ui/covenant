@@ -147,6 +147,22 @@ function scheduleRecurring(rule: RuleTiming, recurrence: Recurrence, ctx: Schedu
   return { status: 'past', due: last.date, termIndex: index, trace: last.trace };
 }
 
+/**
+ * A recurring duty's work item is opened for one date. Once a person marks it
+ * done, that date is finished and the next one is the date to watch.
+ * `covered` is the work item's due date; a work item with none covered the date
+ * shown. `from` schedules the same rule as if today were the given day.
+ * `done` is true only when nothing is left: no date follows the one covered.
+ * A rule with no date claims nothing.
+ */
+export function afterDoneWorkItem(shown: Schedule, covered: IsoDate | null, from: (day: IsoDate) => Schedule): { schedule: Schedule; done: boolean } {
+  if (shown.status === 'undated') return { schedule: shown, done: false };
+  const through = covered ?? shown.due;
+  if (compareDates(shown.due, through) > 0) return { schedule: shown, done: false };
+  const next = from(addDays(through, 1));
+  return next.status === 'upcoming' ? { schedule: next, done: false } : { schedule: shown, done: true };
+}
+
 const UNIT_WORDS: Record<string, [string, string]> = {
   day: ['day', 'days'],
   business_day: ['business day', 'business days'],

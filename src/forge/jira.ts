@@ -269,6 +269,8 @@ export interface FoundIssue {
   created: string | null;
   /** When the work item was resolved, or null while it is open. */
   resolved: string | null;
+  /** The work item's due date (YYYY-MM-DD), or null when it has none. */
+  due: string | null;
 }
 
 /** accountType is "app" for app users, such as Covenant itself when it created a work item. */
@@ -292,12 +294,13 @@ interface SearchResponse {
       updated?: string;
       created?: string;
       resolutiondate?: string | null;
+      duedate?: string | null;
     };
   }>;
   nextPageToken?: string;
 }
 
-const SEARCH_FIELDS = ['summary', 'status', 'issuetype', 'labels', 'assignee', 'reporter', 'updated', 'created', 'resolutiondate'];
+const SEARCH_FIELDS = ['summary', 'status', 'issuetype', 'labels', 'assignee', 'reporter', 'updated', 'created', 'resolutiondate', 'duedate'];
 
 /** JQL search, following nextPageToken up to `max` results. Runs with the caller's permissions. */
 export async function searchIssues(req: Requester, jql: string, max = 100): Promise<FoundIssue[]> {
@@ -326,6 +329,7 @@ export async function searchIssues(req: Requester, jql: string, max = 100): Prom
         updated: f.updated ?? null,
         created: f.created ?? null,
         resolved: f.resolutiondate ?? null,
+        due: f.duedate ?? null,
       });
     }
     nextPageToken = page.nextPageToken;

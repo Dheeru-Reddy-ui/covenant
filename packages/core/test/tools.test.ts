@@ -96,6 +96,7 @@ const row = (id: string, over: Partial<Row> = {}): Row => ({
   scheduleStatus: 'upcoming',
   hasOwner: true,
   decision: 'approved',
+  done: false,
   party: 'Customer',
   contractNames: ['MOBL-63', 'Quillfeather master services agreement', 'tallowmere-quillfeather-msa.pdf'],
   ...over,

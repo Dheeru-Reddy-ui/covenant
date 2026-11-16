@@ -1,4 +1,17 @@
-import { type ContractLoad, type IsoDate, KIND_LABELS, type Schedule, type ToolItem, decisionForTerm, describeTiming, formatMoney, moneyAtStake, registerRows, renewalLoad } from '../../../packages/core/src';
+import {
+  type ContractLoad,
+  type IsoDate,
+  KIND_LABELS,
+  type Schedule,
+  type ToolItem,
+  afterDoneWorkItem,
+  decisionForTerm,
+  describeTiming,
+  formatMoney,
+  moneyAtStake,
+  registerRows,
+  renewalLoad,
+} from '../../../packages/core/src';
 import type { RegisterRowView, RegisterView } from '../../shared/register';
 import { dueDateOf, scheduleFor } from '../dates';
 import * as repo from '../db/repo';
@@ -30,6 +43,24 @@ export interface PortfolioItem extends ToolItem {
   owner: Person | null;
   /** For a notice deadline: the outcome already decided for its term, or null while a decision is still open. */
   decided: string | null;
+  /** The obligation's work item is done in Jira. For a recurring duty that finished one date, and the row shows the next. */
+  workItemDone: boolean;
+}
+
+/**
+ * What a done work item means for the row. A one-off obligation is finished.
+ * A recurring one finished the date its work item was opened for, so the row
+ * moves on to the next date; it is finished only when no date follows.
+ */
+function withWorkItem(
+  o: repo.ObligationRow,
+  schedule: Schedule | null,
+  workItem: FoundIssue | undefined,
+  reschedule: (from: IsoDate) => Schedule,
+): { schedule: Schedule | null; done: boolean; workItemDone: boolean } {
+  if (workItem === undefined || workItem.statusCategory !== 'done') return { schedule, done: false, workItemDone: false };
+  if (schedule === null || o.rule.recurrence === null) return { schedule, done: true, workItemDone: true };
+  return { ...afterDoneWorkItem(schedule, workItem.due, reschedule), workItemDone: true };
 }
 
 export interface Portfolio {
@@ -89,8 +120,14 @@ export async function loadPortfolio(today: IsoDate): Promise<Portfolio> {
     const issue = contract ? visible.get(contract.issueId) : undefined;
     if (run === undefined || contract === undefined || issue === undefined) return [];
     // An approved one-off obligation shows the date on its work item; recurring ones show their next occurrence.
-    const schedule = o.decision === 'approved' && o.rule.recurrence === null ? null : scheduleFor(o.rule, run, contract, o.eventDate, today);
-    const owner = (o.workItemKey ? children.get(o.workItemKey)?.assignee : null) ?? null;
+    const workItem = o.workItemKey ? children.get(o.workItemKey) : undefined;
+    const { schedule, done, workItemDone } = withWorkItem(
+      o,
+      o.decision === 'approved' && o.rule.recurrence === null ? null : scheduleFor(o.rule, run, contract, o.eventDate, today),
+      workItem,
+      (from) => scheduleFor(o.rule, run, contract, o.eventDate, from),
+    );
+    const owner = workItem?.assignee ?? null;
     const noticeTerm = schedule !== null && schedule.status !== 'undated' && schedule.termIndex !== null ? schedule.termIndex : contract.termIndex;
     const decided =
       o.rule.kind === 'renewal_notice' ? (decisionForTerm(decisions.filter((d) => d.contractId === contract.id), noticeTerm)?.outcome ?? null) : null;
@@ -103,6 +140,8 @@ export async function loadPortfolio(today: IsoDate): Promise<Portfolio> {
         schedule,
         owner,
         decided,
+        workItemDone,
+        done,
         kind: o.rule.kind,
         party: o.rule.responsibleParty,
         contractNames: [issue.key, issue.summary, contract.fileName],
@@ -161,6 +200,7 @@ export async function loadRegister(windowDays: number | null, today: IsoDate): P
       scheduleStatus: r.scheduleStatus,
       decision: r.decision,
       workItemKey: r.obligation.workItemKey,
+      workItemDone: r.workItemDone,
       owner: r.owner === null ? null : { accountId: r.owner.accountId, displayName: r.owner.displayName },
       flags: r.flags,
       decided: r.decided === null ? null : (OUTCOME_LABELS[r.decided] ?? r.decided),

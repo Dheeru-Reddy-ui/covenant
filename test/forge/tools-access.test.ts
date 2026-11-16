@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ClauseRow, ContractRow, ObligationRow, RunRow } from '../../src/forge/db/repo';
 
 /**
@@ -115,7 +115,7 @@ const h = vi.hoisted(() => {
     clause,
     obligation,
     title: 'Acme Corp master services agreement',
-    jira: { visible: false, calls: [] as Array<{ method: string; path: string }> },
+    jira: { visible: false, calls: [] as Array<{ method: string; path: string }>, children: [] as unknown[] },
     insertDecision: vi.fn(async () => undefined),
     logAccess: vi.fn(async (_entries: unknown[], _nowMs: number) => 0),
     loadContext: vi.fn(async () => ({ fetchedAtMs: 0, cached: false, related: [], goals: [], teams: [], owners: [], problems: [] })),
@@ -142,7 +142,7 @@ vi.mock('@forge/api', () => {
         ? reply(200, { id: h.contract.issueId, key: h.contract.issueKey, fields: { summary: h.title } })
         : reply(404, { errorMessages: ['Issue does not exist or you do not have permission to see it.'] });
     }
-    if (path.startsWith('/rest/api/3/search/jql')) return reply(200, { issues: [] });
+    if (path.startsWith('/rest/api/3/search/jql')) return reply(200, { issues: h.jira.visible ? h.jira.children : [] });
     return reply(500, { errorMessages: ['unexpected call in test'] });
   };
   const requester = {
@@ -212,6 +212,7 @@ const writes = () => h.jira.calls.filter((c) => c.method !== 'GET' && !c.path.st
 beforeEach(() => {
   h.jira.visible = false;
   h.jira.calls.length = 0;
+  h.jira.children = [];
   h.insertDecision.mockClear();
   h.logAccess.mockClear();
   h.loadContext.mockClear();
@@ -359,6 +360,50 @@ describe('the same tools for a person who can see it (so the checks above are no
     expect(String((confirmed as { error?: unknown }).error)).toContain('LEGAL-1');
     expect(h.insertDecision).not.toHaveBeenCalled();
     expect(writes()).toEqual([]);
+  });
+
+  describe('when the obligation work item is done in Jira', () => {
+    const workItem = (category: string, duedate: string | null) => ({
+      id: '10002',
+      key: 'LEGAL-2',
+      fields: { summary: 'Work item', status: { name: 'Finished', statusCategory: { key: category } }, issuetype: { name: 'Subtask' }, duedate, assignee: null },
+    });
+    const saved = { ...h.obligation };
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-11-16T12:00:00Z'));
+      Object.assign(h.obligation, { decision: 'approved', workItemId: '10002', workItemKey: 'LEGAL-2' });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+      Object.assign(h.obligation, saved);
+    });
+
+    it('shows a finished one-off obligation as done, never overdue or ownerless', async () => {
+      Object.assign(h.obligation, { dueDate: '2026-11-01', scheduleStatus: 'past' });
+      h.jira.children = [workItem('indeterminate', '2026-11-01')];
+      const open = await listObligationsTool({ ...envelope }, caller);
+      expect(open).toMatchObject({ obligations: [{ due: '2026-11-01', overdue: true, done: false, workItemDone: false }] });
+
+      h.jira.children = [workItem('done', '2026-11-01')];
+      const done = await listObligationsTool({ ...envelope }, caller);
+      expect(done).toMatchObject({ obligations: [{ due: '2026-11-01', overdue: false, done: true, workItemDone: true, workItem: 'LEGAL-2' }] });
+    });
+
+    it('moves a recurring duty on to its next date once the work item for this one is done', async () => {
+      h.obligation.rule = {
+        ...h.obligation.rule,
+        kind: 'reporting_deliverable',
+        anchor: 'period_end',
+        offset: { count: 15, unit: 'business_day', direction: 'after' },
+        recurrence: { every: { count: 1, unit: 'quarter' }, basis: 'calendar' },
+      } as typeof h.obligation.rule;
+      h.jira.children = [workItem('indeterminate', '2027-01-21')];
+      expect(await listObligationsTool({ ...envelope }, caller)).toMatchObject({ obligations: [{ due: '2027-01-21', done: false, workItemDone: false }] });
+
+      h.jira.children = [workItem('done', '2027-01-21')];
+      expect(await listObligationsTool({ ...envelope }, caller)).toMatchObject({ obligations: [{ due: '2027-04-21', done: false, workItemDone: true }] });
+    });
   });
 
   it('previews a decision without confirm and records it only with confirm, once the deadline is reviewed', async () => {

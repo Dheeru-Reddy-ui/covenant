@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { addDays, compareDates } from '../src/dates/civil';
 import type { RuleTiming } from '../src/dates/resolve';
 import type { ContractTerms } from '../src/dates/terms';
-import { type ScheduleContext, currentTermIndex, describeTiming, scheduleRule } from '../src/schedule';
+import { type ScheduleContext, afterDoneWorkItem, currentTermIndex, describeTiming, scheduleRule } from '../src/schedule';
 
 // The fictional sample contract: effective 1 March 2025, two-year initial term, one-year renewals.
 const terms: ContractTerms = {
@@ -189,6 +189,64 @@ describe('scheduleRule: recurring deadlines', () => {
           for (const later of s.later) expect(compareDates(later, s.due)).toBeGreaterThan(0);
         }
         if (s.status === 'past') expect(compareDates(s.due, today)).toBeLessThan(0);
+      }),
+    );
+  });
+});
+
+describe('afterDoneWorkItem: a recurring duty whose work item a person marked done', () => {
+  const from =
+    (rule: Rule, over: Partial<ScheduleContext> = {}) =>
+    (day: string) =>
+      scheduleRule(rule, ctx({ ...over, today: day }));
+
+  it('moves on to the next date once the work item for the date shown is done', () => {
+    const shown = scheduleRule(reporting, ctx());
+    expect(afterDoneWorkItem(shown, '2027-01-21', from(reporting))).toMatchObject({ done: false, schedule: { status: 'upcoming', due: '2027-04-21' } });
+  });
+
+  it('counts a work item finished late, after its date, as covering that date', () => {
+    const shown = scheduleRule(reporting, ctx({ today: '2027-01-25' }));
+    expect(shown).toMatchObject({ status: 'upcoming', due: '2027-04-21' });
+    // The report due 2027-01-21 is done; the April one is still open.
+    expect(afterDoneWorkItem(shown, '2027-01-21', from(reporting))).toEqual({ schedule: shown, done: false });
+  });
+
+  it('takes a work item with no due date as covering the date shown', () => {
+    const shown = scheduleRule(reporting, ctx());
+    expect(afterDoneWorkItem(shown, null, from(reporting))).toMatchObject({ done: false, schedule: { due: '2027-04-21' } });
+  });
+
+  it('leaves a later date open: a work item done for an earlier date does not cover it', () => {
+    const shown = scheduleRule(reporting, ctx());
+    expect(afterDoneWorkItem(shown, '2026-10-21', from(reporting))).toEqual({ schedule: shown, done: false });
+  });
+
+  it('is done when no date follows the one the work item covered', () => {
+    const shown = scheduleRule(insurance, ctx({ autoRenew: false }));
+    expect(shown).toMatchObject({ status: 'past', due: '2026-03-31' });
+    expect(afterDoneWorkItem(shown, '2026-03-31', from(insurance, { autoRenew: false }))).toEqual({ schedule: shown, done: true });
+  });
+
+  it('claims nothing when the rule has no date', () => {
+    const fiscal: Rule = { ...reporting, recurrence: { every: { count: 1, unit: 'quarter' }, basis: 'fiscal' } };
+    const shown = scheduleRule(fiscal, ctx());
+    expect(afterDoneWorkItem(shown, '2027-01-21', from(fiscal))).toEqual({ schedule: shown, done: false });
+  });
+
+  it('never shows a date on or before the one the work item covered, unless nothing is left', () => {
+    const rules = [reporting, insurance, priceChange, serviceCredit];
+    fc.assert(
+      fc.property(fc.integer({ min: 0, max: 365 * 6 }), fc.integer({ min: 0, max: 120 }), fc.integer({ min: 0, max: rules.length - 1 }), (days, back, which) => {
+        const rule = rules[which] as Rule;
+        const today = addDays('2025-03-01', days);
+        const shown = scheduleRule(rule, ctx({ today }));
+        if (shown.status === 'undated') return;
+        const covered = addDays(shown.due, -back);
+        const r = afterDoneWorkItem(shown, covered, from(rule));
+        if (r.done) expect(r.schedule).toBe(shown);
+        else if (r.schedule.status !== 'undated' && r.schedule !== shown) expect(compareDates(r.schedule.due, covered)).toBeGreaterThan(0);
+        if (back > 0) expect(r).toEqual({ schedule: shown, done: false });
       }),
     );
   });

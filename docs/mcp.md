@@ -87,7 +87,7 @@ Since 15 November 2026:
 
 Checked over MCP on 15 November 2026: `list_obligations` returned the new fields, and its three reads appeared in the access log under MCP.
 
-On 16 November 2026, on a never-used site with the production install, following only these steps: an admin enabled the tools, and a Claude custom connector chose that site on the consent screen. `list_obligations` answered the 90-day question with the sample's three notice deadlines, and `record_decision` without `confirm` returned `confirmation_required` with a preview and wrote nothing. Since then the preview's `noticeDeadlineReview` says whether a person has confirmed the deadline, a confirmed call is refused with `deadline_unreviewed` until a person approves the renewal notice obligation in the panel, and too short a rationale is refused with "give a reason of at least 10 characters".
+On 16 November 2026, on a never-used site with the production install, following only these steps: an admin enabled the tools, and a Claude custom connector chose that site on the consent screen. `list_obligations` answered the 90-day question with the sample's three notice deadlines, and `record_decision` without `confirm` returned `confirmation_required` with a preview and wrote nothing. Since then the preview's `noticeDeadlineReview` says whether a person has confirmed the deadline, a confirmed call is refused with `deadline_unreviewed` until a person approves the renewal notice obligation in the panel, and too short a rationale is refused with "give a reason of at least 10 characters". `list_obligations` also returns `done` and `workItemDone`: an obligation whose work item is done in Jira is never overdue, and a recurring duty whose work item is done shows its next date.
 
 ## Notes
 

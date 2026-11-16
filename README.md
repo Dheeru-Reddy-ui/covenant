@@ -38,7 +38,7 @@ You need a Jira Cloud site where you are a site admin. Rovo is optional. Turning
 5. **Review.** Each obligation shows its clause, its rule and its due date; click **Why this date** to see the working. Click **Approve and create work item** on one. Under **Giving notice**, choose which party you are and confirm the delivery methods; under **Contract value**, confirm the value so the register can count it.
 6. **Decide on the renewal.** In **Renewal decision**, load the related work and suggested owners, look at the supplier record and the send-by dates, open the drafted notice, then **Record decision**.
 7. **Check a certificate.** Approve the insurance obligation, open the work item it creates (under the contract's **Subtasks**), and open its Covenant panel from **View app actions**. Click **Attach a certificate that should pass**, then **Attach one with problems**: the second fails on the named party, the limit and its expiry, and drafts a chase message.
-8. **See the portfolio.** Open **Apps** in Jira's sidebar, then **Covenant register**: the money auto-renewing in 90 days, the charts, and every obligation by due date.
+8. **See the portfolio.** Open **Apps** in Jira's sidebar, then **Covenant register**: the money auto-renewing in 90 days, the charts, and every obligation by due date. Mark an obligation's work item done in Jira and the register shows it as Done; a recurring duty, such as a quarterly report, moves on to its next date.
 9. **Get the Decision due items.** The daily check opens them within a day of installing; **Run the daily check now** on the admin page runs it at once. The admin page also shows the **Quality** panel and the **AI access log**.
 10. **Ask Rovo** (if your site has Rovo). Open Rovo chat, choose **Covenant contract assistant**, and ask *Brief me on the Quillfeather renewal*. To have the agent brief every new Decision due item, follow [docs/automation.md](docs/automation.md).
 11. **Use an outside MCP client** (optional). Follow [docs/mcp.md](docs/mcp.md).
@@ -86,7 +86,7 @@ The gap between the columns is deliberate: when a reading is doubtful, Covenant 
 | Rovo agent, skill and MCP tools | `rovo:agent`, `rovo:skill`, `action`, `rovo:mcp` |
 | Related work, goals, teams, owners | Teamwork Graph API, as the signed-in user |
 
-- `packages/core`: pure TypeScript with no Forge, Node or browser imports: the schema, extractor, details pass, evidence check, quote verifier, critic, clause locator, date engine with holiday calendars, money parser, notice and service-level calculations, and injection detector. 484 unit and property-based tests.
+- `packages/core`: pure TypeScript with no Forge, Node or browser imports: the schema, extractor, details pass, evidence check, quote verifier, critic, clause locator, date engine with holiday calendars, money parser, notice and service-level calculations, and injection detector. 492 unit and property-based tests.
 - `test/forge`: app tests with Jira, Forge SQL and Teamwork Graph faked. They prove a user who cannot see a contract gets nothing from any tool, a planted clause is not followed, every tool read is logged with ids only, and no log line can contain contract text.
 - `src/forge`: resolvers, the queue worker, the daily job, the attachment trigger, the four tools, Forge SQL repositories and the Teamwork Graph client.
 - `src/frontend`: the UI Kit screens.

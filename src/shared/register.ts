@@ -15,8 +15,11 @@ export interface RegisterRowView {
   scheduleStatus: 'upcoming' | 'past' | 'undated';
   decision: string;
   workItemKey: string | null;
+  /** The work item is done in Jira. With flags.done false, it finished an earlier date of a recurring duty. */
+  workItemDone: boolean;
   owner: { accountId: string; displayName: string } | null;
-  flags: { noOwner: boolean; insideNoticeWindow: boolean; overdue: boolean };
+  /** done: the work item for the date shown is done, so the row is never overdue or ownerless. */
+  flags: { noOwner: boolean; insideNoticeWindow: boolean; overdue: boolean; done: boolean };
   /** For a notice deadline: the decision recorded for its term, such as "Renew". Null while one is still needed. */
   decided: string | null;
 }

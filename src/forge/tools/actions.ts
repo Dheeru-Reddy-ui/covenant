@@ -79,8 +79,11 @@ export const listObligationsTool = (payload: unknown, context: unknown) =>
         /** For a notice deadline: the decision already recorded for its term (renew, renegotiate or terminate), or null. */
         decided: r.decided,
         overdue: r.flags.overdue,
+        /** The work item for this date is done in Jira. A recurring duty whose work item finished an earlier date shows its next date instead, with done false. */
+        done: r.flags.done,
         owner: r.owner?.displayName ?? null,
         workItem: o.workItemKey,
+        workItemDone: r.workItemDone,
         workItemUrl: browseUrl(base, o.workItemKey),
         citation: clause ? citationOut(clause, r.run.paginated) : null,
       };

@@ -10,6 +10,7 @@ const item = (id: string, over: Partial<Item> = {}): Item => ({
   scheduleStatus: 'upcoming',
   hasOwner: true,
   decision: 'approved',
+  done: false,
   ...over,
 });
 
@@ -52,6 +53,13 @@ describe('registerRows', () => {
   it('flags items with nobody responsible', () => {
     const [row] = registerRows([item('a', { hasOwner: false })], options);
     expect(row?.flags.noOwner).toBe(true);
+  });
+
+  it('marks an item whose work item is done, and never calls it overdue or ownerless', () => {
+    const [row] = registerRows([item('a', { due: '2026-11-10', scheduleStatus: 'past', hasOwner: false, done: true })], options);
+    expect(row).toMatchObject({ daysLeft: -2, flags: { done: true, overdue: false, noOwner: false } });
+    const [open] = registerRows([item('b', { due: '2026-11-10', scheduleStatus: 'past' })], options);
+    expect(open?.flags).toMatchObject({ done: false, overdue: true });
   });
 
   it('flags renewal notices whose deadline is inside the decision lead time, and only those', () => {

@@ -13,6 +13,8 @@ export interface RegisterItem {
   /** Someone is responsible: the obligation has a work item with an assignee. */
   hasOwner: boolean;
   decision: ObligationDecision;
+  /** The work item for the date shown is done in Jira. */
+  done: boolean;
 }
 
 export interface RegisterOptions {
@@ -25,7 +27,7 @@ export interface RegisterOptions {
 
 export type RegisterRow<T extends RegisterItem> = T & {
   daysLeft: number | null;
-  flags: { noOwner: boolean; insideNoticeWindow: boolean; overdue: boolean };
+  flags: { noOwner: boolean; insideNoticeWindow: boolean; overdue: boolean; done: boolean };
 };
 
 export function registerRows<T extends RegisterItem>(items: readonly T[], options: RegisterOptions): Array<RegisterRow<T>> {
@@ -37,9 +39,11 @@ export function registerRows<T extends RegisterItem>(items: readonly T[], option
         ...item,
         daysLeft,
         flags: {
-          noOwner: !item.hasOwner,
+          // Finished work needs no owner and is never late.
+          noOwner: !item.done && !item.hasOwner,
           insideNoticeWindow: item.kind === 'renewal_notice' && daysLeft !== null && daysLeft >= 0 && daysLeft <= options.noticeLeadDays,
-          overdue: daysLeft !== null && daysLeft < 0,
+          overdue: !item.done && daysLeft !== null && daysLeft < 0,
+          done: item.done,
         },
       };
     })

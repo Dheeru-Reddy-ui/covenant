@@ -65,15 +65,19 @@ function rowsOf(view: RegisterView) {
           <Stack space="space.050">
             <User accountId={row.owner.accountId} />
             {row.workItemKey && <Link href={`/browse/${row.workItemKey}`}>{row.workItemKey}</Link>}
+            {row.workItemDone && !row.flags.done && <Text size="small">Done for an earlier date</Text>}
           </Stack>
         ) : (
-          <Text size="small">{row.workItemKey ? `${row.workItemKey}, unassigned` : 'Not approved yet'}</Text>
+          <Text size="small">
+            {row.workItemKey ? `${row.workItemKey}, unassigned${row.workItemDone && !row.flags.done ? ', done for an earlier date' : ''}` : 'Not approved yet'}
+          </Text>
         ),
       },
       {
         key: 'flags',
         content: (
           <Inline space="space.050" shouldWrap>
+            {row.flags.done && <Lozenge appearance="success">Done</Lozenge>}
             {row.decided !== null && <Lozenge appearance="success">Decided: {row.decided}</Lozenge>}
             {row.flags.insideNoticeWindow && row.decided === null && <Lozenge appearance="moved">Decision needed</Lozenge>}
             {row.flags.insideNoticeWindow && row.decided !== null && <Lozenge>Inside notice window</Lozenge>}

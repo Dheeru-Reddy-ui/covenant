@@ -62,6 +62,7 @@ Returns `{ok, today, timeZone, filters, matched, returned, truncated, decisionLe
 - `kind`, `kindLabel`, `summary`, `responsibleParty` and `timing` (the rule in words);
 - `due` (YYYY-MM-DD or null), `daysLeft`, `dateStatus` (`upcoming`, `past` or `undated`) and `noDateBecause`;
 - `review`, `insideNoticeWindow`, `decided` (the decision recorded for that term, or null), `overdue`, `owner`, `workItem` and `workItemUrl`;
+- `done` (the work item for this date is done in Jira, so it is never overdue) and `workItemDone`. When a recurring duty's work item is done, it finished the date it was opened for, and `due` is already the next date, with `done` false;
 - `citation {quote, location, clause, clauseHeading, page, pageEnd, readsLikeInstruction, pageUncertain}`. Code finds `clause` (such as `1.2`) and its heading from the numbering around the quote. Both are null when the contract doesn't number that passage. `page` is null for Word files.
 
 Rows are sorted by due date, with undated rows last. Rejected obligations never appear.
