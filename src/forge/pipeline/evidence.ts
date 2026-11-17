@@ -17,9 +17,10 @@ import {
 } from '../../../packages/core/src';
 import { UnsupportedDocumentError, parseDocument, sha256Hex } from '../../parse/document';
 import type { EvidenceCheckView, EvidenceView } from '../../shared/evidence';
-import { scheduleFor, todayUtc } from '../dates';
+import { nextAfterWorkItem, scheduleFor, todayUtc } from '../dates';
 import * as repo from '../db/repo';
 import { ensureSchema } from '../db/schema';
+import { requireModelBudget } from '../budget';
 import { UserFacingError, loggableError } from '../errors';
 import { type IssueInfo, type Requester, addComment, asApp, asUser, downloadAttachment, getIssue, issueHeader, uploadAttachment } from '../jira';
 import { sampleCertificates } from '../../../samples/fictional/workspace';
@@ -157,6 +158,9 @@ export async function startEvidenceCheck(
   if (attachment === undefined) throw new UserFacingError('That file is not attached to this work item.');
   if (!SUPPORTED_NAME.test(attachment.filename)) throw new UserFacingError('Covenant checks PDF and Word (.docx) files.');
   if (attachment.size > MAX_ATTACHMENT_BYTES) throw new UserFacingError('The file is larger than Covenant reads (15 MB).');
+  // A file already checked under these rules costs nothing; only a new or failed check counts against the day's limit.
+  const before = (await repo.listEvidenceChecks(obligation.id)).find((c) => c.attachmentId === attachmentId && c.evidenceVersion === EVIDENCE_VERSION);
+  if (before === undefined || before.status === 'failed') await requireModelBudget();
 
   const { id, queued } = await repo.queueEvidenceCheck(
     {
@@ -431,7 +435,16 @@ export async function evidenceView(issue: IssueInfo, today: IsoDate): Promise<Ev
         check: check ? checkView(check) : null,
       };
     }),
+    next: nextOf(b, issue, today),
   };
+}
+
+function nextOf(b: ObligationBundle, issue: IssueInfo, today: IsoDate): EvidenceView['next'] {
+  const o = b.obligation;
+  if (o.workItemId !== issue.id) return o.workItemKey === null ? null : { kind: 'opened', key: o.workItemKey, due: o.dueDate };
+  if (o.rule.recurrence === null || issue.statusCategory !== 'done') return null;
+  const s = nextAfterWorkItem(o.rule, b.run, b.contract, o.eventDate, issue.dueDate, today);
+  return s === null ? { kind: 'last' } : { kind: 'open', due: s.due };
 }
 
 /** A person's click: the chase draft goes on the work item as a comment, as that person. Covenant never sends it to the supplier. */

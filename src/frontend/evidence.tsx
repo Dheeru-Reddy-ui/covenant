@@ -1,4 +1,4 @@
-import { Box, Heading, Inline, LoadingButton, Lozenge, SectionMessage, Stack, Strong, Text, xcss } from '@forge/react';
+import { Box, Heading, Inline, Link, LoadingButton, Lozenge, SectionMessage, Stack, Strong, Text, xcss } from '@forge/react';
 import React from 'react';
 import type { EvidenceCheckView, EvidenceFindingView, EvidenceView } from '../shared/evidence';
 import type { ClauseView } from '../shared/panel';
@@ -183,6 +183,36 @@ export function EvidenceSection({ view, busy, runAction }: { view: EvidenceView;
           {view.expectedParty ? ` It should name ${view.expectedParty}.` : ' Covenant does not know the bound party’s name yet: confirm the parties on the contract’s work item.'}
         </Text>
       </Stack>
+
+      {view.next?.kind === 'open' && (
+        <SectionMessage appearance="success" title="This date is done">
+          <Stack space="space.100">
+            <Text>The clause asks for this again by {view.next.due}. Open a work item for that date, with the same assignee, so the register keeps an owner on it.</Text>
+            <Inline>
+              <LoadingButton
+                appearance="primary"
+                isLoading={busy === 'action:evidence.openNext'}
+                isDisabled={busy !== null}
+                onClick={() =>
+                  void runAction('evidence.openNext', {}, (data) => {
+                    const r = data as { key: string; dueDate: string | null; created: boolean; assigned: boolean };
+                    return `${r.created ? 'Opened' : 'Already open:'} ${r.key}${r.dueDate ? `, due ${r.dueDate}` : ''}${r.assigned ? ', with the same assignee' : ''}.`;
+                  })
+                }
+              >
+                Open the work item for {view.next.due}
+              </LoadingButton>
+            </Inline>
+          </Stack>
+        </SectionMessage>
+      )}
+      {view.next?.kind === 'opened' && (
+        <Text>
+          This work item covered an earlier date. The obligation has moved on to <Link href={`/browse/${view.next.key}`}>{view.next.key}</Link>
+          {view.next.due ? `, due ${view.next.due}` : ''}.
+        </Text>
+      )}
+      {view.next?.kind === 'last' && <Text>This date is done, and the contract asks for this no more times.</Text>}
 
       {files.length === 0 && <Text>No PDF or Word file is attached to this work item yet.</Text>}
       {view.sampleCertificates && (

@@ -61,4 +61,9 @@ export interface EvidenceView {
   /** A sample workspace contract: the panel offers two invented certificates to try the check with. */
   sampleCertificates: boolean;
   attachments: Array<{ id: string; fileName: string; supported: boolean; tooLarge: boolean; check: EvidenceCheckView | null }>;
+  /**
+   * For a recurring obligation: 'open' when this work item is done and a person can open the one for the next date;
+   * 'opened' when this is an earlier date's item and the obligation has moved on; 'last' when no date follows. Null otherwise.
+   */
+  next: { kind: 'open'; due: string } | { kind: 'opened'; key: string; due: string | null } | { kind: 'last' } | null;
 }

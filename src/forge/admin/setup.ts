@@ -1,7 +1,7 @@
 import type { SampleStatus, SetupResult } from '../../shared/admin';
 import { ensureSchema } from '../db/schema';
 import { UserFacingError, loggableError, readableError } from '../errors';
-import { JiraError, addIssueTypeToProject, asUser, createIssueType, createProject, getProject, listIssueTypes } from '../jira';
+import { JiraError, addIssueTypeToProject, asUser, createIssueType, createProject, getProject, listIssueTypes, projectIssueTypes } from '../jira';
 import { SAMPLE_WORKSPACE, getJson, putJson } from '../settings';
 import { startSampleWorkspace } from './sample';
 
@@ -83,9 +83,10 @@ export async function oneClickSetup(accountId: string): Promise<SetupResult> {
   }
   await putJson(SETUP, { projectId: project.id, projectKey: project.key, issueTypeId } satisfies StoredSetup, accountId);
 
-  // 2b. The procurement template's only standard work type is "Order", so the sample's
-  // reviews and incidents would be Orders. Add a company-wide Task type: the site's own,
-  // or a new one, since a fresh site's only Task belongs to its first team-managed space.
+  // 2b. The sample's reviews and incidents are Tasks. The task tracking template brings
+  // Task (checked on a site, 17 Nov 2026), and a project set up before from the procurement
+  // template had only "Order", so make sure of a company-wide Task: the site's own, or a
+  // new one, since a fresh site's only Task may belong to its first team-managed space.
   let taskAdded = false;
   try {
     const existing = siteTypes.find((t) => /^task$/i.test(t.name) && !t.subtask && t.scope === undefined);
@@ -97,14 +98,16 @@ export async function oneClickSetup(accountId: string): Promise<SetupResult> {
   }
 
   // 2c. Approved obligations, Decision due reminders and notice items are created under
-  // the contract, which needs a subtask type in the project. The procurement scheme has
-  // none, and a fresh site's only Subtask types belong to its team-managed spaces.
+  // the contract, which needs a subtask type in the project. The task tracking template
+  // brings Sub-task; a project set up before from the procurement template had none, and a
+  // fresh site's only Subtask types may belong to its team-managed spaces.
   let subtaskAdded = false;
   try {
+    const inProject = (await projectIssueTypes(req, project.id)).some((t) => t.subtask === true || t.hierarchyLevel === -1);
     const existing = siteTypes.find((t) => (t.subtask === true || t.hierarchyLevel === -1) && t.scope === undefined);
-    const subtask = existing ?? (await createIssueType(req, 'Subtask', 'A smaller piece of work under another work item.', -1));
-    subtaskAdded = await addIssueTypeToProject(req, project.id, subtask.id);
-    if (subtaskAdded) notes.push(`Added the ${subtask.name} work type to ${project.name}, so approved obligations and reminders can be created under each contract.`);
+    const subtask = inProject ? null : (existing ?? (await createIssueType(req, 'Subtask', 'A smaller piece of work under another work item.', -1)));
+    subtaskAdded = subtask !== null && (await addIssueTypeToProject(req, project.id, subtask.id));
+    if (subtaskAdded && subtask !== null) notes.push(`Added the ${subtask.name} work type to ${project.name}, so approved obligations and reminders can be created under each contract.`);
   } catch (error) {
     console.error(`setup subtask type failed project=${project.id} error=${loggableError(error)}`);
     notes.push(

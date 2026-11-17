@@ -4,6 +4,7 @@ import { DETAILS_VERSION, type DetailsFailure, PRODUCTION_MODEL, type SourceDocu
 import { parseDocument, sha256Hex } from '../../parse/document';
 import * as repo from '../db/repo';
 import { ensureSchema } from '../db/schema';
+import { requireModelBudget } from '../budget';
 import { UserFacingError, loggableError } from '../errors';
 import { asApp, downloadAttachment } from '../jira';
 import { ForgeLlmClient } from '../llm/forge-llm-client';
@@ -118,6 +119,8 @@ export async function queueDetails(issueId: string, contractId: string): Promise
   if (contract === null || contract.issueId !== issueId) throw new UserFacingError('That contract belongs to a different work item.');
   const run = await repo.latestRun(contract.id);
   if (run === null || (run.status !== 'needs_review' && run.status !== 'approved')) throw new UserFacingError('This contract has not finished extraction yet.');
+  const before = await repo.getDetailsRun(run.id);
+  if (before === null || before.status === 'failed') await requireModelBudget();
   if (!(await repo.markDetailsQueued(run.id, contract.id, DETAILS_VERSION, PRODUCTION_MODEL, Date.now()))) return { status: 'already' };
   try {
     await queue.push({ body: { runId: run.id, mode: 'details' } });

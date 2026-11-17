@@ -4,6 +4,7 @@ import { EXTRACTOR_VERSION, PRODUCTION_MODEL, SCHEMA_VERSION, WEEKENDS_ONLY } fr
 import { sha256Hex, sniffKind } from '../../parse/document';
 import * as repo from '../db/repo';
 import { ensureSchema } from '../db/schema';
+import { requireModelBudget } from '../budget';
 import { UserFacingError, loggableError } from '../errors';
 import { type Requester, asUser, downloadAttachment, getIssue } from '../jira';
 
@@ -66,6 +67,10 @@ export async function startExtraction(issueId: string, attachmentId: string, acc
   if (contract === null) throw new Error('contract row missing after insert');
   // The same bytes may have been attached again under a new id; read the one that is there now.
   if (contract.attachmentId !== attachment.id) await repo.setContractAttachment(contract.id, attachment.id);
+
+  // Only a reading that will cost tokens counts against the day's limit: a new run, or one that failed and will be retried.
+  const before = await repo.findRun(contract.id, EXTRACTOR_VERSION);
+  if (before === null || before.status === 'failed') await requireModelBudget(now);
 
   const created = await repo.insertRunIfNew({
     id: randomUUID(),

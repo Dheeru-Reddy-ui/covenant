@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { addDays, compareDates } from '../src/dates/civil';
 import type { RuleTiming } from '../src/dates/resolve';
 import type { ContractTerms } from '../src/dates/terms';
-import { type ScheduleContext, afterDoneWorkItem, currentTermIndex, describeTiming, scheduleRule } from '../src/schedule';
+import { type ScheduleContext, afterDoneWorkItem, atOpenWorkItem, currentTermIndex, describeTiming, scheduleRule } from '../src/schedule';
 
 // The fictional sample contract: effective 1 March 2025, two-year initial term, one-year renewals.
 const terms: ContractTerms = {
@@ -249,6 +249,32 @@ describe('afterDoneWorkItem: a recurring duty whose work item a person marked do
         if (back > 0) expect(r).toEqual({ schedule: shown, done: false });
       }),
     );
+  });
+});
+
+describe('atOpenWorkItem: a recurring duty whose current work item is open', () => {
+  const from =
+    (rule: Rule, over: Partial<ScheduleContext> = {}) =>
+    (day: string) =>
+      scheduleRule(rule, ctx({ ...over, today: day }));
+
+  it('shows the open work item\'s date when earlier dates were done on earlier items', () => {
+    const shown = scheduleRule(reporting, ctx());
+    expect(shown).toMatchObject({ due: '2027-01-21' });
+    expect(atOpenWorkItem(shown, '2027-04-21', from(reporting))).toMatchObject({ status: 'upcoming', due: '2027-04-21' });
+  });
+
+  it('leaves the date alone when the work item is for the date shown, or an earlier one still open', () => {
+    const shown = scheduleRule(reporting, ctx());
+    expect(atOpenWorkItem(shown, '2027-01-21', from(reporting))).toBe(shown);
+    expect(atOpenWorkItem(shown, '2026-10-21', from(reporting))).toBe(shown);
+    expect(atOpenWorkItem(shown, null, from(reporting))).toBe(shown);
+  });
+
+  it('leaves an undated schedule alone', () => {
+    const fiscal: Rule = { ...reporting, recurrence: { every: { count: 1, unit: 'quarter' }, basis: 'fiscal' } };
+    const shown = scheduleRule(fiscal, ctx());
+    expect(atOpenWorkItem(shown, '2027-04-21', from(fiscal))).toBe(shown);
   });
 });
 

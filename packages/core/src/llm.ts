@@ -10,6 +10,19 @@
 export const PRODUCTION_MODEL = 'claude-haiku-4-5-20251001';
 export const FALLBACK_MODEL = 'claude-sonnet-4-6';
 
+/**
+ * The model to call, given what Forge LLMs offers now (`list()`). The
+ * production model stays while it is offered, deprecated included, because a
+ * deprecated model still answers and the eval describes it. Once it is gone,
+ * the fallback is used if offered. With no list, or neither model offered, it
+ * stays on the production model so the call fails with a clear error. Each run
+ * records the model it used.
+ */
+export function chooseModel(offered: ReadonlyArray<{ model: string }> | null): string {
+  if (offered === null || offered.some((m) => m.model === PRODUCTION_MODEL)) return PRODUCTION_MODEL;
+  return offered.some((m) => m.model === FALLBACK_MODEL) ? FALLBACK_MODEL : PRODUCTION_MODEL;
+}
+
 export interface LlmTool {
   name: string;
   /** Written for the model: what the tool records and the rules it cannot see in the schema. */

@@ -80,6 +80,10 @@ export interface IssueInfo {
   projectId: string;
   issueType: { id: string; name: string; subtask: boolean; hierarchyLevel: number };
   attachments: Attachment[];
+  /** The status category key: 'new', 'indeterminate' or 'done'. */
+  statusCategory: string;
+  dueDate: string | null;
+  assigneeId: string | null;
 }
 
 interface IssueResponse {
@@ -89,11 +93,14 @@ interface IssueResponse {
     attachment?: Attachment[];
     project?: { id: string };
     issuetype?: { id: string; name: string; subtask?: boolean; hierarchyLevel?: number };
+    status?: { statusCategory?: { key?: string } };
+    duedate?: string | null;
+    assignee?: { accountId?: string } | null;
   };
 }
 
 export async function getIssue(req: Requester, issueIdOrKey: string): Promise<IssueInfo> {
-  const response = await req.requestJira(route`/rest/api/3/issue/${issueIdOrKey}?fields=attachment,project,issuetype`, {
+  const response = await req.requestJira(route`/rest/api/3/issue/${issueIdOrKey}?fields=attachment,project,issuetype,status,duedate,assignee`, {
     headers: { Accept: 'application/json' },
   });
   if (!response.ok) throw await failure(response, 'reading the work item');
@@ -110,6 +117,9 @@ export async function getIssue(req: Requester, issueIdOrKey: string): Promise<Is
       hierarchyLevel: type?.hierarchyLevel ?? (type?.subtask ? -1 : 0),
     },
     attachments: (issue.fields?.attachment ?? []).map((a) => ({ id: String(a.id), filename: a.filename, mimeType: a.mimeType, size: a.size })),
+    statusCategory: issue.fields?.status?.statusCategory?.key ?? '',
+    dueDate: issue.fields?.duedate ?? null,
+    assigneeId: issue.fields?.assignee?.accountId ?? null,
   };
 }
 
@@ -468,6 +478,8 @@ export async function getProject(req: Requester, idOrKey: string): Promise<Proje
   return { id: String(p.id), key: p.key, name: p.name };
 }
 
+export const PROJECT_TEMPLATE = 'com.atlassian.jira-core-project-templates:jira-core-simplified-task-tracking';
+
 export async function createProject(req: Requester, project: { key: string; name: string; description: string; leadAccountId: string }): Promise<ProjectInfo> {
   const response = await req.requestJira(route`/rest/api/3/project`, {
     method: 'POST',
@@ -478,7 +490,9 @@ export async function createProject(req: Requester, project: { key: string; name
       description: project.description,
       leadAccountId: project.leadAccountId,
       projectTypeKey: 'business',
-      projectTemplateKey: 'com.atlassian.jira-core-project-templates:jira-core-simplified-procurement',
+      // Task tracking gives Task and Sub-task with To Do and Done (checked on a site, 17 Nov 2026), so a
+      // person finishes an obligation's work item in one step. Procurement's was Requested, Approved, Purchased.
+      projectTemplateKey: PROJECT_TEMPLATE,
       assigneeType: 'UNASSIGNED',
     }),
   });

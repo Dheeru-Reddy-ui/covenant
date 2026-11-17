@@ -1314,10 +1314,57 @@ export async function decideDetail(id: string, decision: DetailDecision, by: str
 
 // --- Evidence checks ---------------------------------------------------------
 
-/** The approved obligation whose work item this is, if Covenant created it. */
+/** The approved obligation whose work item this is, if Covenant created it: its current one, or one it has moved on from. */
 export async function findObligationByWorkItem(issueId: string): Promise<ObligationRow | null> {
   const rows = await select(`SELECT ${OBLIGATION_COLUMNS} FROM obligation WHERE work_item_id = ? AND decision = 'approved' ORDER BY updated_at_ms DESC LIMIT 1`, issueId);
-  return rows[0] ? toObligation(rows[0]) : null;
+  if (rows[0]) return toObligation(rows[0]);
+  const earlier = await select('SELECT obligation_id FROM obligation_work_item WHERE work_item_id = ?', issueId);
+  if (!earlier[0]) return null;
+  const moved = await select(`SELECT ${OBLIGATION_COLUMNS} FROM obligation WHERE id = ? AND decision = 'approved'`, String(earlier[0].obligation_id));
+  return moved[0] ? toObligation(moved[0]) : null;
+}
+
+/**
+ * Claims the move from a finished work item to the next one. False when
+ * another click claimed it first. The row stays as the finished item's link to
+ * its obligation; releaseWorkItemMove gives the claim back if the move failed.
+ */
+export async function claimWorkItemMove(obligationId: string, from: { id: string; key: string }, dueDate: IsoDate | null, nowMs: number): Promise<boolean> {
+  const added = await change(
+    'INSERT IGNORE INTO obligation_work_item (work_item_id, obligation_id, work_item_key, due_date, moved_at_ms) VALUES (?, ?, ?, ?, ?)',
+    from.id,
+    obligationId,
+    from.key,
+    dueDate,
+    nowMs,
+  );
+  return added === 1;
+}
+
+export async function releaseWorkItemMove(fromWorkItemId: string): Promise<void> {
+  await change('DELETE FROM obligation_work_item WHERE work_item_id = ?', fromWorkItemId);
+}
+
+/** Points an approved obligation at the work item for its next date, if it still points at the finished one. */
+export async function moveToNextWorkItem(
+  obligationId: string,
+  fromWorkItemId: string,
+  next: { id: string; key: string },
+  dueDate: IsoDate | null,
+  scheduleStatus: ScheduleStatus,
+  nowMs: number,
+): Promise<boolean> {
+  const moved = await change(
+    "UPDATE obligation SET work_item_id = ?, work_item_key = ?, due_date = ?, schedule_status = ?, updated_at_ms = ? WHERE id = ? AND work_item_id = ? AND decision = 'approved'",
+    next.id,
+    next.key,
+    dueDate,
+    scheduleStatus,
+    nowMs,
+    obligationId,
+    fromWorkItemId,
+  );
+  return moved === 1;
 }
 
 export type EvidenceStatus = 'queued' | 'running' | 'done' | 'failed';
@@ -1369,6 +1416,18 @@ const toEvidence = (r: Raw): EvidenceCheckRow => ({
   queuedAtMs: num(r.queued_at_ms),
   finishedAtMs: numOrNull(r.finished_at_ms),
 });
+
+/** Model jobs queued on this site since `sinceMs`: extractions, details passes and evidence checks, one document reading each. */
+export async function countModelJobsSince(sinceMs: number): Promise<number> {
+  const rows = await select(
+    'SELECT (SELECT COUNT(*) FROM extraction_run WHERE queued_at_ms >= ?) + (SELECT COUNT(*) FROM details_run WHERE queued_at_ms >= ?) + ' +
+      '(SELECT COUNT(*) FROM evidence_check WHERE queued_at_ms >= ?) AS jobs',
+    sinceMs,
+    sinceMs,
+    sinceMs,
+  );
+  return num(rows[0]?.jobs);
+}
 
 /** Queues a check, or re-queues one that failed. False when it is already queued, running or done. */
 export async function queueEvidenceCheck(

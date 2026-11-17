@@ -20,7 +20,7 @@ import { runDailyCheck } from './jobs/daily';
 import { loadPanel } from './panel/view';
 import { startExtraction } from './pipeline/start';
 import { loadRegister } from './register/view';
-import { approveObligation, editObligation, editTerms, rejectObligation, reopenObligation } from './review/actions';
+import { approveObligation, editObligation, editTerms, openNextWorkItem, rejectObligation, reopenObligation } from './review/actions';
 import { getLeadDays, setLeadDays } from './settings';
 
 /**
@@ -131,6 +131,9 @@ resolver.define('evidence.check', ({ payload, context }) =>
     return result;
   }),
 );
+
+// A person's click on a finished work item of a recurring obligation: open the one for the next date.
+resolver.define('evidence.openNext', ({ context }) => answer('evidence.openNext', () => openNextWorkItem(callerOf(context).issueId)));
 
 resolver.define('evidence.attachSample', ({ payload, context }) =>
   answer('evidence.attachSample', () => {

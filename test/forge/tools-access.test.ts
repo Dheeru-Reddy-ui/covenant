@@ -403,6 +403,10 @@ describe('the same tools for a person who can see it (so the checks above are no
 
       h.jira.children = [workItem('done', '2027-01-21')];
       expect(await listObligationsTool({ ...envelope }, caller)).toMatchObject({ obligations: [{ due: '2027-04-21', done: false, workItemDone: true }] });
+
+      // A person opened the next date's item from the finished one: the row follows the open item.
+      h.jira.children = [workItem('new', '2027-04-21')];
+      expect(await listObligationsTool({ ...envelope }, caller)).toMatchObject({ obligations: [{ due: '2027-04-21', done: false, workItemDone: false }] });
     });
   });
 

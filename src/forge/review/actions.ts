@@ -8,11 +8,11 @@ import {
   parseTermsEdit,
   runReviewStatus,
 } from '../../../packages/core/src';
-import { dueDateOf, scheduleFor, todayUtc } from '../dates';
+import { dueDateOf, nextAfterWorkItem, scheduleFor, todayUtc } from '../dates';
 import * as repo from '../db/repo';
 import { ensureSchema } from '../db/schema';
 import { UserFacingError, loggableError, readableError } from '../errors';
-import { asUser, childIssueType, createChild, getIssue } from '../jira';
+import { asUser, childIssueType, createChild, editIssue, getIssue } from '../jira';
 
 /**
  * What a reviewer does in the panel. Every action runs as the signed-in user,
@@ -103,6 +103,81 @@ export async function approveObligation(issueId: string, obligationId: string, a
     const message = readableError(error, 'Covenant could not create the work item. Try again.');
     await repo.releaseApproval(obligation.id, backTo, message, Date.now());
     throw new UserFacingError(message);
+  }
+}
+
+export interface NextWorkItemResult {
+  key: string;
+  dueDate: IsoDate | null;
+  created: boolean;
+  /** The finished item's assignee was given the new one too. */
+  assigned: boolean;
+}
+
+/**
+ * A recurring obligation's work item covers one date. Once a person has
+ * finished it in Jira, their click on that item opens the work item for the
+ * next date under the contract, as that person, with the same assignee, and
+ * the obligation moves to it. The finished item keeps its Covenant panel. A
+ * second click, or a click on an earlier item, gives back the one already open.
+ */
+export async function openNextWorkItem(issueId: string): Promise<NextWorkItemResult> {
+  const started = Date.now();
+  await ensureSchema();
+  const obligation = await repo.findObligationByWorkItem(issueId);
+  if (obligation === null) throw new UserFacingError('This work item is not one Covenant created for an approved obligation.');
+  if (obligation.workItemId !== issueId && obligation.workItemKey !== null) {
+    return { key: obligation.workItemKey, dueDate: obligation.dueDate, created: false, assigned: false };
+  }
+  if (obligation.rule.recurrence === null) throw new UserFacingError('This obligation falls due once, so there is no next date to open.');
+  const [run, contract, clause] = await Promise.all([repo.getRun(obligation.runId), repo.getContract(obligation.contractId), repo.getClause(obligation.clauseId)]);
+  if (run === null || contract === null || clause === null) throw new UserFacingError('That obligation no longer exists. Reload the panel.');
+
+  const req = asUser();
+  const finished = await getIssue(req, issueId);
+  if (finished.statusCategory !== 'done') throw new UserFacingError(`Finish ${finished.key} in Jira first. Covenant then opens the work item for the next date.`);
+  const schedule = nextAfterWorkItem(obligation.rule, run, contract, obligation.eventDate, finished.dueDate, todayUtc());
+  if (schedule === null) throw new UserFacingError('The contract gives no later date for this obligation, so there is nothing to open.');
+
+  if (!(await repo.claimWorkItemMove(obligation.id, { id: finished.id, key: finished.key }, finished.dueDate, started))) {
+    throw new UserFacingError('The next work item is already being opened. Reload the panel in a moment.');
+  }
+  try {
+    const draft = draftWorkItem({
+      rule: obligation.rule,
+      schedule,
+      location: { page: clause.page, pageEnd: clause.pageEnd, paginated: run.paginated, section: clause.section },
+      source: { fileName: contract.fileName, parentKey: contract.issueKey },
+    });
+    const parent = await getIssue(req, contract.issueId);
+    const type = await childIssueType(req, parent);
+    const created = await createChild(req, {
+      projectId: parent.projectId,
+      parentKey: parent.key,
+      issueTypeId: type.id,
+      summary: draft.summary,
+      description: draft.description,
+      dueDate: draft.dueDate,
+    });
+    await repo.recordCreatedItem(created.key, contract.id, 'obligation', Date.now());
+    await repo.moveToNextWorkItem(obligation.id, finished.id, created, draft.dueDate, schedule.status, Date.now());
+
+    // Whoever did this date is the likely owner of the next. A failure leaves it unassigned, which the register flags.
+    let assigned = false;
+    if (finished.assigneeId !== null) {
+      try {
+        await editIssue(req, created.key, { assignee: { accountId: finished.assigneeId } });
+        assigned = true;
+      } catch (error) {
+        console.error(`obligation ${obligation.id} next work item assign failed error=${loggableError(error)}`);
+      }
+    }
+    console.log(`obligation ${obligation.id} moved workItem=${finished.key} next=${created.key} assigned=${assigned} ms=${Date.now() - started}`);
+    return { key: created.key, dueDate: draft.dueDate, created: true, assigned };
+  } catch (error) {
+    await repo.releaseWorkItemMove(finished.id);
+    console.error(`obligation ${obligation.id} next work item failed error=${loggableError(error)} ms=${Date.now() - started}`);
+    throw new UserFacingError(readableError(error, 'Covenant could not open the next work item. Try again.'));
   }
 }
 

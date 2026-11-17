@@ -163,6 +163,19 @@ export function afterDoneWorkItem(shown: Schedule, covered: IsoDate | null, from
   return next.status === 'upcoming' ? { schedule: next, done: false } : { schedule: shown, done: true };
 }
 
+/**
+ * A recurring duty whose current work item is still open. When a person
+ * finished earlier dates and opened the item for a later one, the dates before
+ * it are done, so the date to show is the work item's. `from` schedules the
+ * rule as if today were the given day. An item for the date shown, or for an
+ * earlier date still open, leaves the schedule as it is.
+ */
+export function atOpenWorkItem(shown: Schedule, workItemDue: IsoDate | null, from: (day: IsoDate) => Schedule): Schedule {
+  if (shown.status === 'undated' || workItemDue === null || compareDates(workItemDue, shown.due) <= 0) return shown;
+  const at = from(workItemDue);
+  return at.status === 'upcoming' ? at : shown;
+}
+
 const UNIT_WORDS: Record<string, [string, string]> = {
   day: ['day', 'days'],
   business_day: ['business day', 'business days'],

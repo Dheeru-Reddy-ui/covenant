@@ -311,6 +311,21 @@ CREATE TABLE IF NOT EXISTS access_log (
   KEY idx_access_log_at (at_ms)
 )`;
 
+/**
+ * Earlier work items of a recurring obligation. The obligation points at the
+ * work item for its next date; each one it moved on from is kept here, so the
+ * finished item still opens its Covenant panel and its evidence.
+ */
+const V018_OBLIGATION_WORK_ITEM = `
+CREATE TABLE IF NOT EXISTS obligation_work_item (
+  work_item_id VARCHAR(32) NOT NULL PRIMARY KEY,
+  obligation_id VARCHAR(36) NOT NULL,
+  work_item_key VARCHAR(64) NOT NULL,
+  due_date DATE NULL,
+  moved_at_ms BIGINT NOT NULL,
+  KEY ix_obligation_work_item_obligation (obligation_id)
+)`;
+
 const migrations = migrationRunner
   .enqueue('v001_create_spike_probe', V001_SPIKE_PROBE)
   .enqueue('v002_create_contract', V002_CONTRACT)
@@ -328,7 +343,8 @@ const migrations = migrationRunner
   .enqueue('v014_create_details_run', V014_DETAILS_RUN)
   .enqueue('v015_create_contract_detail', V015_CONTRACT_DETAIL)
   .enqueue('v016_create_evidence_check', V016_EVIDENCE_CHECK)
-  .enqueue('v017_create_access_log', V017_ACCESS_LOG);
+  .enqueue('v017_create_access_log', V017_ACCESS_LOG)
+  .enqueue('v018_create_obligation_work_item', V018_OBLIGATION_WORK_ITEM);
 
 let ready: Promise<void> | null = null;
 

@@ -56,7 +56,14 @@ export async function runPreflight(accountId: string): Promise<PreflightCheck[]>
         return {
           status: 'warn',
           detail: `${PRODUCTION_MODEL} is marked ${production.status}. It still answers for now.`,
-          fix: fallback ? `${FALLBACK_MODEL} is available as the fallback.` : 'Ask the developer to move to a current model.',
+          fix: fallback ? `When it is retired, Covenant moves to ${FALLBACK_MODEL} by itself.` : 'Ask the developer to move to a current model.',
+        };
+      }
+      if (fallback !== undefined) {
+        return {
+          status: 'warn',
+          detail: `${PRODUCTION_MODEL} is no longer offered, so Covenant reads contracts with ${FALLBACK_MODEL}. Each run records the model it used.`,
+          fix: 'Nothing to do here. The published accuracy figures were measured with the earlier model.',
         };
       }
       return {

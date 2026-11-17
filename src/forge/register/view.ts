@@ -5,6 +5,7 @@ import {
   type Schedule,
   type ToolItem,
   afterDoneWorkItem,
+  atOpenWorkItem,
   decisionForTerm,
   describeTiming,
   formatMoney,
@@ -58,7 +59,11 @@ function withWorkItem(
   workItem: FoundIssue | undefined,
   reschedule: (from: IsoDate) => Schedule,
 ): { schedule: Schedule | null; done: boolean; workItemDone: boolean } {
-  if (workItem === undefined || workItem.statusCategory !== 'done') return { schedule, done: false, workItemDone: false };
+  if (workItem === undefined || workItem.statusCategory !== 'done') {
+    // An open item opened for a later date: the dates before it were done on earlier items.
+    const open = schedule !== null && o.rule.recurrence !== null ? atOpenWorkItem(schedule, workItem?.due ?? o.dueDate, reschedule) : schedule;
+    return { schedule: open, done: false, workItemDone: false };
+  }
   if (schedule === null || o.rule.recurrence === null) return { schedule, done: true, workItemDone: true };
   return { ...afterDoneWorkItem(schedule, workItem.due, reschedule), workItemDone: true };
 }

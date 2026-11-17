@@ -1,4 +1,4 @@
-import { type IsoDate, type ObligationRule, type Schedule, type ScheduleContext, scheduleRule } from '../../packages/core/src';
+import { type IsoDate, type ObligationRule, type Schedule, type ScheduleContext, afterDoneWorkItem, scheduleRule } from '../../packages/core/src';
 import type { ContractRow, RunRow } from './db/repo';
 
 /** Today in UTC. With todayIn, the only places the app reads the clock for dates; core never does. */
@@ -40,3 +40,23 @@ export function scheduleFor(rule: ObligationRule, run: RunRow, contract: Contrac
 }
 
 export const dueDateOf = (s: Schedule): IsoDate | null => (s.status === 'undated' ? null : s.due);
+
+/**
+ * For a recurring obligation whose work item for one date is done: the next
+ * date's schedule (core's afterDoneWorkItem), or null when no date follows.
+ * `covered` is the finished work item's due date.
+ */
+export function nextAfterWorkItem(
+  rule: ObligationRule,
+  run: RunRow,
+  contract: ContractRow,
+  eventDate: IsoDate | null,
+  covered: IsoDate | null,
+  today: IsoDate,
+): Extract<Schedule, { status: 'upcoming' }> | null {
+  if (rule.recurrence === null) return null;
+  const shown = scheduleFor(rule, run, contract, eventDate, today);
+  const { schedule, done } = afterDoneWorkItem(shown, covered, (from) => scheduleFor(rule, run, contract, eventDate, from));
+  if (done || schedule.status !== 'upcoming') return null;
+  return covered === null || schedule.due > covered ? schedule : null;
+}
