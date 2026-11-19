@@ -75,7 +75,9 @@ export function noticeWindow(notices: readonly NoticeRule[], ctx: WindowContext)
   // The earliest upcoming deadline is the binding one; with none ahead, the most recent one that passed.
   const chosen = pick('upcoming', true) ?? pick('past', false);
   if (chosen === undefined) {
-    const first = scheduled[0];
+    // A rule that runs from an event (a breach, a chosen termination date) is never dated here, because the
+    // window has no event date. It is a right to act on notice, not a deadline to count down to.
+    const first = scheduled.find((s, i) => notices[i]?.rule.anchor !== 'event');
     const s = first?.schedule;
     if (first === undefined || s === undefined || s.status !== 'undated') return { status: 'no_notice_rule' };
     return { status: 'undated', reason: s.reason, detail: s.detail, obligationId: first.id };

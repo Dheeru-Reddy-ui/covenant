@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { tidyArguments } from './arguments';
 import { EXTRACTOR_VERSION, type VerifiedLocation, renderContract } from './extract';
 import { instructionSigns } from './injection';
 import { type LlmClient, type LlmTool, type LlmUsage, NO_USAGE, type ToolCallRequest, addUsage } from './llm';
@@ -22,7 +23,7 @@ import { DEFAULT_MIN_QUOTE_CHARS, type QuoteRejection, type SourceDocument, loca
  */
 
 /** Bump whenever this prompt, tool or its checks change. Stored on every detail row. */
-export const DETAILS_VERSION = 1;
+export const DETAILS_VERSION = 2;
 
 const Label = z.string().min(1).max(120);
 
@@ -243,12 +244,14 @@ interface Parsed {
 }
 
 function parse(json: string): Parsed {
-  let raw: unknown;
+  let parsedJson: unknown;
   try {
-    raw = JSON.parse(json);
+    parsedJson = JSON.parse(json);
   } catch {
     return { items: [], envelope: ['the tool arguments are not valid JSON'], problems: [] };
   }
+  // Null fields left out and lists sent as JSON text are encoding, not content (arguments.ts).
+  const raw = tidyArguments(ContractDetailsReadingSchema, parsedJson).value;
   const envelope = EnvelopeSchema.safeParse(raw);
   if (!envelope.success) {
     return { items: [], envelope: envelope.error.issues.map((i) => `${i.path.map(String).join('.')}: ${i.message}`), problems: [] };

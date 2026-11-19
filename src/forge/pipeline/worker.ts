@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { AsyncEvent } from '@forge/events';
 import {
+  type AttemptNote,
   type ExtractionSuccess,
   type FailureReason,
   type SourceDocument,
@@ -9,6 +10,7 @@ import {
   normaliseWhitespace,
   scheduleRule,
   sectionAt,
+  summariseProblems,
 } from '../../../packages/core/src';
 import { parseDocument, sha256Hex } from '../../parse/document';
 import { todayUtc } from '../dates';
@@ -41,6 +43,20 @@ const FAILURE_TEXT: Record<FailureReason, string> = {
 interface ExtractionEventBody {
   runId?: unknown;
   [key: string]: unknown;
+}
+
+/** Each first-pass answer for the log: nulls filled, JSON text unpacked, and the problems left. Field names only, never text. */
+export function attemptsLog(attempts: readonly AttemptNote[]): string {
+  const parts = attempts.map((a, i) => `a${i + 1}{nulls=${a.tidied.filledNulls} json=${a.tidied.unwrapped} problems=${summariseProblems(a.problems)}}`);
+  const line = `attempts=${parts.join(' ')}`;
+  return line.length > 1500 ? `${line.slice(0, 1500)}...` : line;
+}
+
+/** Dropped items counted by reason: "schema:3,not_found:1". */
+export function rejectedBy(rejected: ExtractionSuccess['rejected']): string {
+  const counts = new Map<string, number>();
+  for (const r of rejected) counts.set(r.reason, (counts.get(r.reason) ?? 0) + 1);
+  return counts.size === 0 ? 'none' : [...counts.entries()].map(([k, n]) => `${k}:${n}`).join(',');
 }
 
 export async function handler(event: AsyncEvent<ExtractionEventBody>): Promise<void> {
@@ -112,7 +128,7 @@ async function processRun(runId: string, started: number): Promise<void> {
     );
     console.log(
       `run ${runId} failed reason=${outcome.reason} error=${outcome.detail.split(':')[0]} pages=${pages} chars=${chars} calls=${outcome.calls} ` +
-        `tokens=${outcome.usage.inputTokens}/${outcome.usage.outputTokens} ${timings}`,
+        `tokens=${outcome.usage.inputTokens}/${outcome.usage.outputTokens} ${timings} ${attemptsLog(outcome.attempts)}`,
     );
     return;
   }
@@ -121,7 +137,8 @@ async function processRun(runId: string, started: number): Promise<void> {
   console.log(
     `run ${runId} needs_review obligations=${saved.obligations} needsReview=${saved.flagged} rejected=${outcome.rejected.length} ` +
       `quotes=${outcome.grounding.quotesVerified}/${outcome.grounding.quotesReturned} secondPasses=${outcome.secondPasses} pages=${pages} chars=${chars} ` +
-      `calls=${outcome.calls} tokens=${outcome.usage.inputTokens}/${outcome.usage.outputTokens} ${timings} persist=${Date.now() - extractedAt}`,
+      `calls=${outcome.calls} tokens=${outcome.usage.inputTokens}/${outcome.usage.outputTokens} ${timings} persist=${Date.now() - extractedAt} ` +
+      `rejectedBy=${rejectedBy(outcome.rejected)} ${attemptsLog(outcome.attempts)}`,
   );
 
   // The second reading: parties, notices, value and service levels. It records its own failures and never fails the extraction.

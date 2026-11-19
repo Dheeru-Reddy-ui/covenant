@@ -29,7 +29,7 @@ A Rovo agent with a Rovo skill, and an MCP server, answer the same questions fro
 
 - **The model never computes a date or a sum.** It reads the contract and returns rules and quoted amounts. Tested code works out every date and every total.
 - **Every quote is checked.** A quote that does not appear word for word in the file, spacing aside, is dropped with what it supports: obligations, notice addresses, contract values and evidence findings alike. Code, not the model, works out the page and clause number.
-- **Doubt goes to a person.** Unsure readings are read a second time; if the readings disagree, the item is flagged rather than guessed. An unreadable certificate is "needs review", never a pass.
+- **Doubt goes to a person.** Unsure readings are read a second time; if the readings disagree, the item is flagged rather than guessed. A notice deadline whose clause never mentions the term is flagged too, since it may be a right to terminate on notice. An unreadable certificate is "needs review", never a pass.
 - **Contract text is data, never instructions.** Clauses that read like instructions to an AI are flagged in the panel and in every tool reply, quoted text comes back only in marked fields, and tests prove a planted clause is not followed.
 - **Nothing reaches Jira without a person.** Work items and comments are created only on a person's click, and the write tool refuses unless the person confirms, and never records a decision against a notice deadline no one has reviewed. The one exception is the reminder: once someone has extracted a contract, the daily check opens its Decision due item when the notice window nears.
 - **Every AI read is logged.** Each clause read through the panel, the agent or MCP is logged with who, when and which channel (never the text), and admins can see the log.
@@ -97,7 +97,7 @@ Of the 15 not answered, 14 were found and deliberately left for a person, and 1 
 | Rovo agent, skill and MCP tools | `rovo:agent`, `rovo:skill`, `action`, `rovo:mcp` |
 | Related work, goals, teams, owners | Teamwork Graph API, as the signed-in user |
 
-- `packages/core`: pure TypeScript with no Forge, Node or browser imports: the schema, extractor, details pass, evidence check, quote verifier, critic, clause locator, date engine with holiday calendars, money parser, notice and service-level calculations, and injection detector, and the panel's at-a-glance next step. 519 unit and property-based tests.
+- `packages/core`: pure TypeScript with no Forge, Node or browser imports: the schema, extractor, details pass, evidence check, quote verifier, critic, clause locator, date engine with holiday calendars, money parser, notice and service-level calculations, and injection detector, and the panel's at-a-glance next step. 554 unit and property-based tests.
 - `test/forge`: app tests with Jira, Forge SQL and Teamwork Graph faked. They prove a user who cannot see a contract gets nothing from any tool, a planted clause is not followed, every tool read is logged with ids only, and no log line can contain contract text.
 - `src/forge`: resolvers, the queue worker, the daily job, the attachment trigger, the four tools, Forge SQL repositories and the Teamwork Graph client.
 - `src/frontend`: the UI Kit screens.

@@ -98,7 +98,7 @@ export function buildBrief(input: BriefInput): BriefView {
       timing: null,
       note: flaggedNotice
         ? 'A notice clause was found but needs your review before Covenant counts down to it. Check it in the list below.'
-        : 'Covenant found no notice clause for renewal or termination in this contract.',
+        : 'Covenant found no notice deadline tied to the end of the term in this contract.',
     };
   } else if (win.status === 'undated') {
     const rule = obligations.find((o) => o.id === win.obligationId)?.rule;

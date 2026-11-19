@@ -1,3 +1,4 @@
+import { tidyArguments } from './arguments';
 import type { LlmTool, ToolCallRequest, ToolCallResponse } from './llm';
 import { TermsReadingSchema, type TermsReading, toolParameters } from './reading';
 import { type ObligationRule, ObligationRuleSchema } from './schema';
@@ -149,7 +150,7 @@ export async function rereadObligation(
   if (response.argumentsJson === null) return { ok: false, detail: 'no tool call', quotes: NONE };
   const json = parseJson(response.argumentsJson);
   if (!json.ok) return { ok: false, detail: 'arguments are not valid JSON', quotes: NONE };
-  const parsed = ObligationRuleSchema.safeParse(json.value);
+  const parsed = ObligationRuleSchema.safeParse(tidyArguments(ObligationRuleSchema, json.value).value);
   if (!parsed.success) return { ok: false, detail: `invalid rule: ${parsed.error.issues.map((i) => i.path.join('.')).join(', ')}`, quotes: NONE };
   const located = locateQuote(parsed.data.quote, doc, parsed.data.page, { minChars: options.minQuoteChars });
   if (located.status === 'rejected') return { ok: false, detail: `quote ${located.reason}`, quotes: { returned: 1, verified: 0 } };
@@ -162,7 +163,7 @@ export async function rereadTerms(ask: Ask, excerpts: readonly string[]): Promis
   if (response.argumentsJson === null) return { ok: false, detail: 'no tool call', quotes: NONE };
   const json = parseJson(response.argumentsJson);
   if (!json.ok) return { ok: false, detail: 'arguments are not valid JSON', quotes: NONE };
-  const parsed = TermsReadingSchema.safeParse(json.value);
+  const parsed = TermsReadingSchema.safeParse(tidyArguments(TermsReadingSchema, json.value).value);
   if (!parsed.success) return { ok: false, detail: `invalid terms: ${parsed.error.issues.map((i) => i.path.join('.')).join(', ')}`, quotes: NONE };
   return { ok: true, value: parsed.data, quotes: NONE };
 }

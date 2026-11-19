@@ -456,7 +456,7 @@ export function DetailsSection({ contractId, details, brief, run, busy }: { cont
       {details.grounding && (
         <Text size="small">
           Second reading: {details.grounding.verified} of {details.grounding.returned} quotes were found word for word in the contract
-          {details.grounding.rejected > 0 ? `; ${details.grounding.rejected} items without a matching quote were dropped` : ''}.
+          {details.grounding.rejected > 0 ? `; ${details.grounding.rejected} ${details.grounding.rejected === 1 ? 'item that failed' : 'items that failed'} Covenant's checks ${details.grounding.rejected === 1 ? 'was' : 'were'} dropped` : ''}.
         </Text>
       )}
     </Stack>

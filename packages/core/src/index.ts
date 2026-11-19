@@ -36,6 +36,7 @@ export * from './notice';
 export * from './sla';
 export * from './evidence';
 export * from './glance';
+export * from './arguments';
 export {
   AnchorEventSchema,
   ClauseSchema,

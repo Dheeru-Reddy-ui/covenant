@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolveRule } from '../src/dates/resolve';
-import { EXTRACTOR_VERSION, type ExtractionOutcome, extractContract } from '../src/extract';
+import { EXTRACTOR_VERSION, type ExtractionOutcome, extractContract, namesTheTerm } from '../src/extract';
 import { SCHEMA_VERSION } from '../src/schema';
 import { CONTRACT, QUOTES, ScriptedLlm, noticeRule, paymentRule, reading, terms } from './fixtures';
 
@@ -109,6 +109,10 @@ describe('extractContract: the first pass', () => {
     expect(out.repaired).toBe(true);
     expect(out.obligations).toHaveLength(2);
     expect(out.usage).toEqual({ inputTokens: 200, outputTokens: 20 });
+    expect(out.attempts).toEqual([
+      { tidied: { filledNulls: 0, unwrapped: 0 }, problems: ['obligations.0.recurrence: custom'] },
+      { tidied: { filledNulls: 0, unwrapped: 0 }, problems: [] },
+    ]);
   });
 
   it('keeps the valid obligations when one is still invalid after the repair', async () => {
@@ -117,6 +121,52 @@ describe('extractContract: the first pass', () => {
     const out = succeeded(await extractContract(CONTRACT, llm));
     expect(out.obligations.map((o) => o.rule.kind)).toEqual(['renewal_notice']);
     expect(out.rejected).toEqual([expect.objectContaining({ item: 'obligation', index: 1, reason: 'schema' })]);
+  });
+
+  it('keeps items whose empty fields the model left out, without a repair', async () => {
+    const drop = (value: Record<string, unknown>, ...keys: string[]) => Object.fromEntries(Object.entries(value).filter(([k]) => !keys.includes(k)));
+    const full = reading();
+    const sparse = {
+      effectiveDate: drop(full.effectiveDate, 'event'),
+      term: drop(full.term, 'endDateText'),
+      renewal: full.renewal,
+      obligations: [drop(noticeRule(), 'anchorDescription', 'recurrence', 'page'), drop(paymentRule(), 'recurrence')],
+    };
+    const llm = new ScriptedLlm(() => sparse);
+    const out = succeeded(await extractContract(CONTRACT, llm));
+    expect(out.calls).toBe(1);
+    expect(out.rejected).toEqual([]);
+    expect(out.effectiveDate).toMatchObject({ status: 'ready', value: '2025-03-01' });
+    expect(out.term).toMatchObject({ status: 'ready' });
+    expect(out.obligations.map((o) => [o.rule.kind, o.status])).toEqual([
+      ['renewal_notice', 'ready'],
+      ['payment', 'ready'],
+    ]);
+    expect(out.tidied).toEqual({ filledNulls: 6, unwrapped: 0 });
+  });
+
+  it('reads nested values the model sent as JSON text, without a repair', async () => {
+    const full = reading();
+    const llm = new ScriptedLlm(() => ({ ...full, effectiveDate: JSON.stringify(full.effectiveDate), obligations: JSON.stringify(full.obligations) }));
+    const out = succeeded(await extractContract(CONTRACT, llm));
+    expect(out.calls).toBe(1);
+    expect(out.effectiveDate).toMatchObject({ status: 'ready', value: '2025-03-01' });
+    expect(out.obligations).toHaveLength(2);
+    expect(out.tidied).toEqual({ filledNulls: 0, unwrapped: 2 });
+  });
+
+  it('records why each item was refused in field names only, never contract text', async () => {
+    const bad = reading({ obligations: [noticeRule(), paymentRule({ offset: { count: 'thirty', unit: 'day', direction: 'after' } })] });
+    const out = succeeded(await extractContract(CONTRACT, new ScriptedLlm(() => bad)));
+    expect(out.rejected).toEqual([
+      expect.objectContaining({ item: 'obligation', index: 1, reason: 'schema', detail: 'obligations.1.offset.count: invalid_type expected number got string' }),
+    ]);
+  });
+
+  it('says what made a failed answer unusable, in field names only', async () => {
+    const llm = new ScriptedLlm(() => ({ ...reading(), obligations: 'none' }));
+    const out = await extractContract(CONTRACT, llm);
+    expect(out).toMatchObject({ status: 'failed', reason: 'invalid_output', problems: ['obligations: invalid_type expected array got string'] });
   });
 
   it('fails when the answer is still unusable after the repair', async () => {
@@ -142,9 +192,83 @@ describe('extractContract: the first pass', () => {
     expect(await extractContract(CONTRACT, llm)).toMatchObject({ status: 'failed', reason: 'llm_error' });
   });
 
+  describe('a notice deadline counted back from the end of the term', () => {
+    const CONVENIENCE =
+      '14.2 Each Party may also terminate the Agreement for convenience by providing written notice to the other Party at least sixty (60) calendar days prior to the effective date of such termination.';
+    const EVERGREEN = 'It shall automatically continue until terminated by either party upon not less than thirty (30) days prior written notice to the other party.';
+    const doc = { pages: [{ page: 1, text: `${CONVENIENCE}\n${EVERGREEN}` }] };
+    const notice = (quote: string, over: Record<string, unknown> = {}) =>
+      noticeRule({ quote, page: null, offset: { count: 60, unit: 'day', direction: 'before' }, ...over });
+    const run = async (...obligations: unknown[]) =>
+      succeeded(await extractContract(doc, new ScriptedLlm(() => ({ effectiveDate: null, term: null, renewal: null, obligations }))));
+
+    it('goes to review when its clause never mentions the term, its expiry or renewal: it may be a right to terminate on notice', async () => {
+      const out = await run(notice(CONVENIENCE));
+      expect(out.obligations).toEqual([
+        expect.objectContaining({ status: 'needs_review', review: [expect.objectContaining({ reason: 'notice_not_tied_to_term' })] }),
+      ]);
+    });
+
+    it('is not re-read: a second reading of the same words cannot tell a termination right from a renewal deadline', async () => {
+      const out = await run(notice(CONVENIENCE, { confidence: 'low' }));
+      expect(out.calls).toBe(1);
+      expect(out.secondPasses).toBe(0);
+      expect(out.obligations[0]?.review.map((n) => n.reason)).toEqual(['notice_not_tied_to_term']);
+    });
+
+    it('does not make a real notice look like a conflicting clause', async () => {
+      const out = await run(notice(CONVENIENCE), notice(EVERGREEN, { offset: { count: 30, unit: 'day', direction: 'before' } }));
+      expect(out.calls).toBe(1);
+      expect(out.obligations.map((o) => [o.status, o.review.map((n) => n.reason)])).toEqual([
+        ['needs_review', ['notice_not_tied_to_term']],
+        ['ready', []],
+      ]);
+    });
+
+    it('stays ready when its clause names the term or an automatic continuation', async () => {
+      const out = await run(notice(EVERGREEN, { offset: { count: 30, unit: 'day', direction: 'before' } }));
+      expect(out.obligations.map((o) => o.status)).toEqual(['ready']);
+    });
+
+    it('leaves other anchors and other kinds alone', async () => {
+      const fromEvent = notice(CONVENIENCE, { anchor: 'event', anchorDescription: 'the chosen termination date' });
+      const payment = paymentRule({ quote: CONVENIENCE, anchor: 'term_end', page: null, offset: { count: 60, unit: 'day', direction: 'before' } });
+      const out = await run(fromEvent, payment);
+      expect(out.obligations.map((o) => o.status)).toEqual(['ready', 'ready']);
+    });
+  });
+
   it('drops exact duplicates of the same obligation', async () => {
     const llm = new ScriptedLlm(() => reading({ obligations: [noticeRule(), noticeRule({ summary: 'Same again.' }), paymentRule()] }));
     const out = succeeded(await extractContract(CONTRACT, llm));
     expect(out.obligations.map((o) => o.rule.kind)).toEqual(['renewal_notice', 'payment']);
+  });
+});
+
+describe('namesTheTerm', () => {
+  it('finds the term, its expiry, renewal, an anniversary or an automatic continuation', () => {
+    for (const quote of [
+      'at least ninety (90) days before the end of the then-current term.',
+      'not less than 90 days prior to the expiration of the Initial Term',
+      'unless either party gives notice of non-renewal at least 60 days in advance',
+      'at least three months before the expiry date of the Agreement',
+      'no later than 30 days before each anniversary of the Effective Date',
+      'It shall automatically continue until terminated by either party upon thirty (30) days notice.',
+      'unless notice is given before the end of any Extension Period',
+      'The Terms of Service may be terminated on 30 days notice.',
+    ]) {
+      expect(namesTheTerm(quote), quote).toBe(true);
+    }
+  });
+
+  it('does not take "terminate" or "termination" for the term', () => {
+    for (const quote of [
+      'Each Party may terminate the Agreement for convenience at least sixty (60) days prior to the effective date of such termination.',
+      'Either party may terminate this Agreement by giving the other at least ninety (90) days written notice.',
+      'By any of the PHL Parties providing one hundred and twenty (120) days prior written notice to the other Parties.',
+      'Terminated agreements end on the termination date.',
+    ]) {
+      expect(namesTheTerm(quote), quote).toBe(false);
+    }
   });
 });

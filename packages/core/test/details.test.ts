@@ -130,6 +130,20 @@ describe('readContractDetails', () => {
     expect(second.details.filter((d) => d.kind === 'notice_method')).toHaveLength(2);
   });
 
+  it('keeps items whose empty fields the model left out, and lists sent as JSON text, without a repair', async () => {
+    const answer = full();
+    const sparse = {
+      ...answer,
+      parties: (answer.parties as Array<Record<string, unknown>>).map(({ page: _page, ...rest }) => rest),
+      noticeMethods: JSON.stringify((answer.noticeMethods as Array<Record<string, unknown>>).map(({ deemedReceipt, ...rest }) => (deemedReceipt === null ? rest : { ...rest, deemedReceipt }))),
+    };
+    const { outcome, llm } = await run(sparse);
+    expect(llm.requests).toHaveLength(1);
+    expect(outcome.rejected).toEqual([]);
+    expect(outcome.details.filter((d) => d.kind === 'party')).toHaveLength(2);
+    expect(outcome.details.filter((d) => d.kind === 'notice_method')).toHaveLength(3);
+  });
+
   it('accepts empty lists for a contract with none of these', async () => {
     const { outcome } = await run({ parties: [], noticeAddresses: [], noticeMethods: [], values: [], serviceLevels: [] });
     expect(outcome.details).toEqual([]);

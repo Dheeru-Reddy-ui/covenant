@@ -87,6 +87,8 @@ function outcome(over: Partial<Extract<ExtractionOutcome, { status: 'ok' }>> = {
     schemaVersion: 1,
     usage: { inputTokens: 0, outputTokens: 0 },
     calls: 1,
+    attempts: [],
+    tidied: { filledNulls: 0, unwrapped: 0 },
     effectiveDate: {
       status: 'ready',
       value: '2020-01-01',
@@ -204,7 +206,7 @@ describe('scoreContract', () => {
   });
 
   it('scores a failed extraction as no answer everywhere', () => {
-    const failed: ExtractionOutcome = { status: 'failed', reason: 'llm_error', detail: 'x', model: 'm', extractorVersion: 1, schemaVersion: 1, usage: { inputTokens: 0, outputTokens: 0 }, calls: 1 };
+    const failed: ExtractionOutcome = { status: 'failed', reason: 'llm_error', detail: 'x', model: 'm', extractorVersion: 1, schemaVersion: 1, usage: { inputTokens: 0, outputTokens: 0 }, calls: 1, attempts: [] };
     const scores = scoreContract(cuad({ 'Effective Date': '1/1/20' }), failed);
     expect(scores.map((s) => s.answer)).toEqual(['none', 'none', 'none', 'none']);
     expect(aggregate(scores)).toMatchObject({ scorable: 1, exact: 0, noAnswer: 1, clauseGold: 3, clauseHits: 0 });

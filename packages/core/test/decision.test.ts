@@ -80,6 +80,13 @@ describe('noticeWindow', () => {
     expect(noticeWindow([notice], ctx({ minTermIndex: 1 }))).toMatchObject({ deadline: '2027-12-01', termIndex: 1, status: 'later' });
   });
 
+  it('leaves out a rule that runs from an event: the window has no event date, so it can never count down to it', () => {
+    const fromEvent: NoticeRule = { id: 'e30', rule: { anchor: 'event', offset: { count: 30, unit: 'day', direction: 'after' }, recurrence: null } };
+    expect(noticeWindow([fromEvent], ctx())).toEqual({ status: 'no_notice_rule' });
+    expect(noticeWindow([fromEvent, notice], ctx())).toMatchObject({ status: 'due', deadline: '2026-11-30', obligationId: 'n90' });
+    expect(noticeWindow([fromEvent, notice], ctx({ terms: { ...terms, effectiveDate: null } }))).toMatchObject({ status: 'undated', obligationId: 'n90' });
+  });
+
   it('says so when there is no notice rule, or no date without guessing', () => {
     expect(noticeWindow([], ctx())).toEqual({ status: 'no_notice_rule' });
     expect(noticeWindow([notice], ctx({ terms: { ...terms, effectiveDate: null } }))).toMatchObject({

@@ -80,6 +80,15 @@ describe('checkEvidence', () => {
     expect(outcome.expiry).toMatchObject({ date: '2027-02-28', expired: true });
   });
 
+  it('reads an answer whose empty fields were left out and whose objects came as JSON text, without a repair', async () => {
+    const { page: _page, ...requirement } = req();
+    const reply = { ...answer({ requirements: [requirement] }), namedParty: JSON.stringify(answer().namedParty) };
+    const { outcome, llm } = await run(GOOD, reply);
+    expect(llm.requests).toHaveLength(1);
+    expect(outcome.verdict).toBe('pass');
+    expect(outcome.findings).toHaveLength(1);
+  });
+
   it('is still valid on its last day', async () => {
     expect((await run(GOOD, answer(), '2027-02-28')).outcome.verdict).toBe('pass');
   });

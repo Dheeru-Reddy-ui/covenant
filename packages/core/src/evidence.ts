@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { tidyArguments } from './arguments';
 import { type IsoDate, compareDates } from './dates/civil';
 import { parseWrittenDate } from './dates/written';
 import { renderContract } from './extract';
@@ -23,7 +24,7 @@ import { DEFAULT_MIN_QUOTE_CHARS, type SourceDocument, locateQuote, normaliseWhi
  */
 
 /** Bump whenever this prompt, tool or its checks change. Stored on every check. */
-export const EVIDENCE_VERSION = 2;
+export const EVIDENCE_VERSION = 3;
 
 const RequirementReadingSchema = z.strictObject({
   requirement: z.string().min(1).max(240).describe('One thing the clause requires the document to show, as a plain sentence. One requirement per entry.'),
@@ -183,12 +184,14 @@ interface Parsed {
 }
 
 function parse(json: string): { ok: true; value: Parsed } | { ok: false; problems: string[] } {
-  let raw: unknown;
+  let parsedJson: unknown;
   try {
-    raw = JSON.parse(json);
+    parsedJson = JSON.parse(json);
   } catch {
     return { ok: false, problems: ['the tool arguments are not valid JSON'] };
   }
+  // Null fields left out and objects sent as JSON text are encoding, not content (arguments.ts).
+  const raw = tidyArguments(EvidenceReadingSchema, parsedJson).value;
   const envelope = EnvelopeSchema.safeParse(raw);
   if (!envelope.success) return { ok: false, problems: envelope.error.issues.map((i) => `${i.path.map(String).join('.')}: ${i.message}`) };
   const value: Parsed = { documentKind: envelope.data.documentKind, namedParty: null, requirements: [], validUntil: null, dropped: 0, problems: [] };

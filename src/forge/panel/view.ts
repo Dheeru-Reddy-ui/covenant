@@ -47,6 +47,8 @@ const REVIEW_TEXT: Record<ReviewReason, string> = {
   not_rechecked: 'The model was unsure and this was not re-read.',
   date_unreadable: 'The date as written cannot be read with certainty (a blank, a two-digit year, or day/month order).',
   needs_event_date: 'The effective date is an event, such as the last signature. Enter the date.',
+  notice_not_tied_to_term:
+    'Read as notice due before the term ends, but the clause never mentions the term, its expiry or renewal. It may be a right to terminate on notice, which has no deadline. Approve it only if it is a renewal deadline.',
 };
 
 const reviewLines = (notes: ReviewNote[]): string[] => [...new Set(notes.map((n) => REVIEW_TEXT[n.reason] ?? n.reason))];

@@ -65,6 +65,19 @@ describe('contractGlance: the deadline line', () => {
       tone: 'urgent',
     });
   });
+
+  it('does not say there is no deadline while a notice clause waits for a closer look', () => {
+    const none = { status: 'no_notice_rule' as const, deadline: null, daysLeft: null, decisionOpensOn: null };
+    const flagged = obligation({ summary: 'Give notice to end the contract', notice: true, needsReview: true, due: null, upcoming: false });
+    expect(contractGlance(input({ window: none, obligations: [flagged] })).deadline).toEqual({
+      text: 'A notice clause needs review before Covenant counts down to it',
+      label: 'Check first',
+      tone: 'urgent',
+    });
+    // Once a person rejects it, or the clause is not a notice, the line says there is none.
+    expect(contractGlance(input({ window: none, obligations: [{ ...flagged, decision: 'rejected' }] })).deadline.text).toBe('No renewal notice deadline in this contract');
+    expect(contractGlance(input({ window: none, obligations: [{ ...flagged, notice: false }] })).deadline.text).toBe('No renewal notice deadline in this contract');
+  });
 });
 
 describe('contractGlance: the one next step', () => {
@@ -142,6 +155,11 @@ describe('contractGlance: the one next step', () => {
       action: null,
       tone: 'done',
     });
+  });
+
+  it('says no obligations were found, rather than that every one was reviewed, when the reading found none', () => {
+    const g = contractGlance(input({ window: { status: 'no_notice_rule', deadline: null, daysLeft: null, decisionOpensOn: null } }));
+    expect(g.next).toMatchObject({ section: null, title: 'Nothing needs you right now', detail: 'Covenant found no obligations with deadlines in this contract.', tone: 'done' });
   });
 
   it('never sends a person to a decision that is settled', () => {

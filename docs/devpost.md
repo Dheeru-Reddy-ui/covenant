@@ -68,7 +68,7 @@ The design rule is that the model reads and code decides:
 2. A verifier drops any quote that isn't in the file word for word, spacing aside.
 3. A deterministic date engine turns rules into dates. It has unit and property-based tests and handles term ends, anniversaries, business days, recurrences and leap years.
 4. Code also derives the page and the clause number from where the quote sits; the model's page number is only a hint.
-5. Doubtful readings get a second pass, and when the passes disagree, the obligation is flagged for a person instead of guessed.
+5. Doubtful readings get a second pass, and when the passes disagree, the obligation is flagged for a person instead of guessed. A notice deadline before the term's end whose clause never mentions the term is flagged too: it may be a right to terminate on notice, which sets no deadline.
 6. Money is copied as text from inside a verified quote and parsed by code; the model never totals anything. Notice addresses, values and evidence findings pass the same verbatim check.
 7. Contract text is data: clauses that read like instructions to an AI are flagged, tool replies keep contract text in marked quote fields, and a test proves a planted clause is not followed.
 
@@ -79,7 +79,7 @@ I measured it on 30 contracts from CUAD, a public dataset of contracts labelled 
 
 Twenty invented trap contracts (conflicting notice periods, dates in words, two-digit years, a planted instruction, a planted fee and more) all pass. A gate, `npm run traps -- --gate`, fails when fewer traps pass than a recorded baseline; the CI workflow runs it whenever the repository has an Anthropic API key, and the CUAD run has the same gate. To prove it, a prompt telling the model to obey the contract let the planted fee through and the gate failed; everything else held, because code checks every quote and computes every date.
 
-There are 603 tests: 519 for the core, 25 for the eval and 59 for the app. The app tests check that a user who cannot see a contract gets nothing from any tool, a planted clause is not followed, every read is logged with ids only, and no log line can contain contract text.
+There are 638 tests: 554 for the core, 25 for the eval and 59 for the app. The app tests check that a user who cannot see a contract gets nothing from any tool, a planted clause is not followed, every read is logged with ids only, and no log line can contain contract text.
 
 ## How it meets the Forge requirement
 

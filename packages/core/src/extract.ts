@@ -1,3 +1,5 @@
+import type { z } from 'zod';
+import { problemDigest, tidyArguments } from './arguments';
 import { conflictGroups, contextAround, rereadObligation, rereadTerms, sameTiming } from './critic';
 import type { IsoDate } from './dates/civil';
 import { type ContractTerms, type Duration, termBounds } from './dates/terms';
@@ -26,13 +28,26 @@ import { DEFAULT_MIN_QUOTE_CHARS, type QuoteLocation, type QuoteRejection, type 
  *    the problems listed.
  * 2. Every quote must appear verbatim in the contract, or the item is dropped.
  *    Dates are parsed by code from text copied inside a verified quote.
- * 3. Low-confidence or conflicting items get a second reading (critic.ts). If
+ * 3. A notice deadline counted back from the end of the term whose clause never
+ *    mentions the term is marked "needs review": it may be a right to
+ *    terminate on notice, which has no deadline of its own.
+ * 4. Low-confidence or conflicting items get a second reading (critic.ts). If
  *    the readings disagree, the item is marked "needs review" and its value is
  *    withheld from the date engine. Never guess.
  */
 
 /** Bump whenever the prompt, the tool or the checks change. Runs are keyed on attachment hash plus this. */
-export const EXTRACTOR_VERSION = 2;
+export const EXTRACTOR_VERSION = 4;
+
+/**
+ * Words that tie a clause to the contract's duration: the term, its expiry,
+ * renewal, an anniversary, or an automatic continuation or extension.
+ * "Terminate" and "termination" do not count as "term".
+ */
+const TERM_WORDS = /\bterms?\b|expir|renew|anniversar|automatic|extend|extension/i;
+
+/** Whether a clause mentions the contract's duration, so a deadline before the end of the term can come from it. */
+export const namesTheTerm = (quote: string): boolean => TERM_WORDS.test(quote);
 
 /** About 100k tokens: well inside Haiku's 200k context, with room for the answer. */
 export const DEFAULT_MAX_DOCUMENT_CHARS = 400_000;
@@ -63,7 +78,9 @@ export type ReviewReason =
   /** The date as written cannot be read with certainty: blanks, a two-digit year, or day/month order. */
   | 'date_unreadable'
   /** The effective date is an event, such as the last signature. A person enters the date. */
-  | 'needs_event_date';
+  | 'needs_event_date'
+  /** A notice deadline counted from the end of the term, from a clause that never mentions the term: possibly a right to terminate on notice. */
+  | 'notice_not_tied_to_term';
 
 /** Why an item needs a person. `detail` names fields and reasons only, never contract text, so it is safe to log. */
 export interface ReviewNote {
@@ -114,6 +131,12 @@ export interface Rejection {
   detail: string;
 }
 
+/** One answer to the first pass: what tidying undid, and what still failed the check. Field names and types only, safe to log. */
+export interface AttemptNote {
+  tidied: { filledNulls: number; unwrapped: number };
+  problems: string[];
+}
+
 interface RunInfo {
   /** The model asked for. */
   model: string;
@@ -121,6 +144,8 @@ interface RunInfo {
   schemaVersion: number;
   usage: LlmUsage;
   calls: number;
+  /** Each answer to the first pass, in order: the first, then the repair if there was one. */
+  attempts: AttemptNote[];
 }
 
 export interface ExtractionSuccess extends RunInfo {
@@ -137,6 +162,8 @@ export interface ExtractionSuccess extends RunInfo {
   secondPasses: number;
   /** Whether the first answer was rejected and repaired. */
   repaired: boolean;
+  /** In the kept answer: fields left out and read as null, and nested values sent as JSON text (arguments.ts). */
+  tidied: { filledNulls: number; unwrapped: number };
 }
 
 export type FailureReason = 'empty_document' | 'too_long' | 'no_tool_call' | 'invalid_output' | 'llm_error';
@@ -145,6 +172,8 @@ export interface ExtractionFailure extends RunInfo {
   status: 'failed';
   reason: FailureReason;
   detail: string;
+  /** For invalid_output: what made the last answer unusable, as field names and types only (problemDigest), so safe to log. */
+  problems?: string[];
 }
 
 export type ExtractionOutcome = ExtractionSuccess | ExtractionFailure;
@@ -198,38 +227,60 @@ interface ParsedReading {
   term: TermReading | null;
   renewal: RenewalReading | null;
   obligations: Array<{ index: number; rule: ObligationRule }>;
-  /** Problems that make the answer unusable as a whole. */
+  /** Problems that make the answer unusable as a whole: messages for the repair turn, and a digest safe to log. */
   envelope: string[];
+  envelopeDigest: string[];
   /** Problems confined to one item, which is dropped if a repair does not fix it. */
-  items: Array<{ item: RejectedItem; index?: number; problems: string[] }>;
+  items: Array<{ item: RejectedItem; index?: number; problems: string[]; digest: string[] }>;
+  tidied: { filledNulls: number; unwrapped: number };
+}
+
+/** Check one item against its schema, keeping messages for the repair turn and a digest safe to log. */
+function checkItem<T>(schema: z.ZodType<T>, value: unknown, prefix: string): { ok: true; data: T } | { ok: false; problems: string[]; digest: string[] } {
+  const parsed = schema.safeParse(value);
+  if (parsed.success) return { ok: true, data: parsed.data };
+  return { ok: false, problems: issuesOf(prefix, parsed.error), digest: problemDigest(prefix, parsed.error, value) };
 }
 
 function parseReading(json: string): ParsedReading {
-  const empty: ParsedReading = { effectiveDate: null, term: null, renewal: null, obligations: [], envelope: [], items: [] };
-  let raw: unknown;
+  const empty: ParsedReading = {
+    effectiveDate: null,
+    term: null,
+    renewal: null,
+    obligations: [],
+    envelope: [],
+    envelopeDigest: [],
+    items: [],
+    tidied: { filledNulls: 0, unwrapped: 0 },
+  };
+  let parsedJson: unknown;
   try {
-    raw = JSON.parse(json);
+    parsedJson = JSON.parse(json);
   } catch {
-    return { ...empty, envelope: ['the tool arguments are not valid JSON'] };
+    return { ...empty, envelope: ['the tool arguments are not valid JSON'], envelopeDigest: ['not valid JSON'] };
   }
+  // Undo encoding habits (null fields left out, nested values sent as JSON text) before the strict check.
+  const tidy = tidyArguments(ContractReadingSchema, parsedJson);
+  const raw = tidy.value;
+  const tidied = { filledNulls: tidy.filledNulls.length, unwrapped: tidy.unwrapped.length };
   const envelope = ContractReadingEnvelopeSchema.safeParse(raw);
-  if (!envelope.success) return { ...empty, envelope: issuesOf('', envelope.error) };
+  if (!envelope.success) return { ...empty, envelope: issuesOf('', envelope.error), envelopeDigest: problemDigest('', envelope.error, raw), tidied };
 
-  const result: ParsedReading = { ...empty };
-  const effective = EffectiveDateReadingSchema.nullable().safeParse(envelope.data.effectiveDate);
-  if (effective.success) result.effectiveDate = effective.data;
-  else result.items.push({ item: 'effectiveDate', problems: issuesOf('effectiveDate', effective.error) });
-  const term = TermReadingSchema.nullable().safeParse(envelope.data.term);
-  if (term.success) result.term = term.data;
-  else result.items.push({ item: 'term', problems: issuesOf('term', term.error) });
-  const renewal = RenewalReadingSchema.nullable().safeParse(envelope.data.renewal);
-  if (renewal.success) result.renewal = renewal.data;
-  else result.items.push({ item: 'renewal', problems: issuesOf('renewal', renewal.error) });
+  const result: ParsedReading = { ...empty, tidied };
+  const effective = checkItem(EffectiveDateReadingSchema.nullable(), envelope.data.effectiveDate, 'effectiveDate');
+  if (effective.ok) result.effectiveDate = effective.data;
+  else result.items.push({ item: 'effectiveDate', problems: effective.problems, digest: effective.digest });
+  const term = checkItem(TermReadingSchema.nullable(), envelope.data.term, 'term');
+  if (term.ok) result.term = term.data;
+  else result.items.push({ item: 'term', problems: term.problems, digest: term.digest });
+  const renewal = checkItem(RenewalReadingSchema.nullable(), envelope.data.renewal, 'renewal');
+  if (renewal.ok) result.renewal = renewal.data;
+  else result.items.push({ item: 'renewal', problems: renewal.problems, digest: renewal.digest });
 
   envelope.data.obligations.forEach((candidate, index) => {
-    const rule = ObligationRuleSchema.safeParse(candidate);
-    if (rule.success) result.obligations.push({ index, rule: rule.data });
-    else result.items.push({ item: 'obligation', index, problems: issuesOf(`obligations.${index}`, rule.error) });
+    const rule = checkItem(ObligationRuleSchema, candidate, `obligations.${index}`);
+    if (rule.ok) result.obligations.push({ index, rule: rule.data });
+    else result.items.push({ item: 'obligation', index, problems: rule.problems, digest: rule.digest });
   });
   return result;
 }
@@ -329,8 +380,22 @@ function samePassage(a: VerifiedLocation, b: VerifiedLocation): boolean {
 
 export async function extractContract(doc: SourceDocument, llm: LlmClient, options: ExtractOptions = {}): Promise<ExtractionOutcome> {
   const meter = new Meter(llm);
-  const info = (): RunInfo => ({ model: llm.modelId, extractorVersion: EXTRACTOR_VERSION, schemaVersion: SCHEMA_VERSION, usage: meter.usage, calls: meter.calls });
-  const failed = (reason: FailureReason, detail: string): ExtractionFailure => ({ ...info(), status: 'failed', reason, detail });
+  const attempts: AttemptNote[] = [];
+  const info = (): RunInfo => ({
+    model: llm.modelId,
+    extractorVersion: EXTRACTOR_VERSION,
+    schemaVersion: SCHEMA_VERSION,
+    usage: meter.usage,
+    calls: meter.calls,
+    attempts,
+  });
+  const failed = (reason: FailureReason, detail: string, problems?: string[]): ExtractionFailure => ({
+    ...info(),
+    status: 'failed',
+    reason,
+    detail,
+    ...(problems ? { problems } : {}),
+  });
 
   const chars = doc.pages.reduce((sum, p) => sum + p.text.length, 0);
   if (doc.pages.every((p) => p.text.trim() === '')) return failed('empty_document', 'the document has no text');
@@ -349,6 +414,7 @@ export async function extractContract(doc: SourceDocument, llm: LlmClient, optio
     // Pass 1, with at most one repair.
     const prompt = `Contract text:\n\n${renderContract(doc)}`;
     let usable: ParsedReading | null = null;
+    let lastProblems: string[] = [];
     let repaired = false;
     let repair: ToolCallRequest['repair'];
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -361,6 +427,8 @@ export async function extractContract(doc: SourceDocument, llm: LlmClient, optio
       });
       if (response.argumentsJson === null) return failed('no_tool_call', `stop reason ${response.stopReason ?? 'unknown'}`);
       const parsed = parseReading(response.argumentsJson);
+      lastProblems = parsed.envelopeDigest;
+      attempts.push({ tidied: parsed.tidied, problems: [...parsed.envelopeDigest, ...parsed.items.flatMap((i) => i.digest)] });
       if (parsed.envelope.length === 0) {
         usable = parsed;
         repaired = attempt > 0;
@@ -368,13 +436,13 @@ export async function extractContract(doc: SourceDocument, llm: LlmClient, optio
       if (parsed.envelope.length === 0 && parsed.items.length === 0) break;
       repair = { previousArguments: response.argumentsJson, problems: [...parsed.envelope, ...parsed.items.flatMap((i) => i.problems)] };
     }
-    if (usable === null) return failed('invalid_output', 'the answer was unusable after one repair');
+    if (usable === null) return failed('invalid_output', 'the answer was unusable after one repair', lastProblems);
 
     const rejected: Rejection[] = usable.items.map((i) => ({
       item: i.item,
       ...(i.index !== undefined ? { index: i.index } : {}),
       reason: 'schema' as const,
-      detail: i.problems.map((p) => p.split(':')[0]).join(', '),
+      detail: i.digest.join(', '),
     }));
     const keep = <R, V>(item: RejectedItem, built: Built<R, V> | null): Fact<R, V> | null => {
       if (built === null) return null;
@@ -404,11 +472,22 @@ export async function extractContract(doc: SourceDocument, llm: LlmClient, optio
     }
     rejected.sort((a, b) => (a.index ?? -1) - (b.index ?? -1));
 
-    // Pass 2 for obligations: low confidence, or a duty with conflicting deadlines.
+    // A right to terminate on notice ("either party may terminate on 60 days' notice") has no deadline of its
+    // own; read as notice before the term ends, it gives a date the contract never set. A clause that never
+    // mentions the term goes to a person. A second reading of the same words would not settle it, so none is made.
+    for (const o of obligations) {
+      if (o.rule.kind === 'renewal_notice' && o.rule.anchor === 'term_end' && !namesTheTerm(o.rule.quote)) {
+        flag(o, { reason: 'notice_not_tied_to_term', detail: 'notice counted from the term end, but the clause does not mention the term, expiry or renewal' });
+      }
+    }
+
+    // Pass 2 for obligations: low confidence, or a duty with conflicting deadlines among the items still standing.
     let secondPasses = 0;
-    const groups = conflictGroups(obligations.map((o) => o.rule));
+    const standingIndex = obligations.flatMap((o, i) => (o.status === 'ready' ? [i] : []));
+    const groups = conflictGroups(standingIndex.map((i) => (obligations[i] as ExtractedObligation).rule)).map((g) => g.map((j) => standingIndex[j] as number));
     const inConflict = new Set(groups.flat());
     for (const [i, obligation] of obligations.entries()) {
+      if (obligation.status !== 'ready') continue;
       if (obligation.rule.confidence !== 'low' && !inConflict.has(i)) continue;
       if (critic === null || secondPasses >= critic.maxSecondPasses) {
         flag(obligation, { reason: 'not_rechecked', detail: 'doubtful reading that was not re-read' });
@@ -501,6 +580,7 @@ export async function extractContract(doc: SourceDocument, llm: LlmClient, optio
       grounding: { quotesReturned: check.tally.returned, quotesVerified: check.tally.verified },
       secondPasses,
       repaired,
+      tidied: usable.tidied,
     };
   } catch (error) {
     return failed('llm_error', describeError(error));

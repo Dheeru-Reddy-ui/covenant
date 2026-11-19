@@ -30,6 +30,13 @@ describe('critic: second readings of doubtful obligations', () => {
     expect(out.secondPasses).toBe(1);
   });
 
+  it('accepts a second reading whose empty fields were left out', async () => {
+    const { recurrence: _r, anchorDescription: _a, page: _p, ...sparse } = noticeRule();
+    const llm = scripted(reading({ obligations: [noticeRule({ confidence: 'low' }), paymentRule()] }), () => sparse);
+    const out = succeeded(await extractContract(CONTRACT, llm));
+    expect(out.obligations[0]).toMatchObject({ status: 'ready', review: [] });
+  });
+
   it('marks the obligation for review when the readings disagree', async () => {
     const llm = scripted(reading({ obligations: [noticeRule({ confidence: 'low' })] }), () =>
       noticeRule({ offset: { count: 60, unit: 'day', direction: 'before' } }),

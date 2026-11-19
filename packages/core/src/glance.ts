@@ -62,7 +62,12 @@ const OPEN_DECISION = 'Open the renewal decision';
 
 function deadlineLine(input: GlanceInput): Glance['deadline'] {
   const w = input.window;
-  if (w.status === 'no_notice_rule') return { text: 'No renewal notice deadline in this contract', label: null, tone: 'none' };
+  if (w.status === 'no_notice_rule') {
+    // A notice clause the extractor doubted is kept out of the countdown until a person checks it.
+    const doubted = input.obligations.some((o) => o.notice && o.needsReview && o.decision !== 'rejected');
+    if (doubted) return { text: 'A notice clause needs review before Covenant counts down to it', label: 'Check first', tone: 'urgent' };
+    return { text: 'No renewal notice deadline in this contract', label: null, tone: 'none' };
+  }
   if (w.status === 'undated' || w.deadline === null) return { text: 'The notice deadline has no date yet', label: 'No date yet', tone: 'urgent' };
   const text = `Notice deadline ${w.deadline}${w.daysLeft === null ? '' : ` (${daysLeftText(w.daysLeft)})`}`;
   if (input.decided) {
@@ -146,7 +151,8 @@ function nextStep(input: GlanceInput, counts: Glance['counts'], nextDate: Glance
   const parts: string[] = [];
   if (w.status === 'later' && w.decisionOpensOn !== null && decided === null) parts.push(`The renewal decision opens on ${w.decisionOpensOn}.`);
   if (nextDate !== null) parts.push(`Next date is ${nextDate.due}: ${nextDate.summary.trim().replace(/[.\s]+$/, '')}.`);
-  return { section: null, title: 'Nothing needs you right now', detail: parts.length > 0 ? parts.join(' ') : 'Every obligation has been reviewed.', action: null, tone: 'done' };
+  const fallback = input.obligations.length === 0 ? 'Covenant found no obligations with deadlines in this contract.' : 'Every obligation has been reviewed.';
+  return { section: null, title: 'Nothing needs you right now', detail: parts.length > 0 ? parts.join(' ') : fallback, action: null, tone: 'done' };
 }
 
 export function contractGlance(input: GlanceInput): Glance {
