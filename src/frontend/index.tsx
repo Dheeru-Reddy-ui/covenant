@@ -257,6 +257,112 @@ function Facts({ run, onEdit }: { run: RunView; onEdit: () => void }) {
   );
 }
 
+type Glance = NonNullable<RunView['glance']>;
+type FoldKey = 'decision' | 'obligations' | 'details' | 'terms' | 'calendar';
+
+const glanceBox = xcss({
+  borderColor: 'color.border.brand',
+  borderWidth: 'border.width.selected',
+  borderStyle: 'solid',
+  borderRadius: 'radius.medium',
+  padding: 'space.200',
+  backgroundColor: 'color.background.accent.blue.subtlest',
+});
+
+const TONE: Record<Glance['deadline']['tone'], LozengeAppearance> = {
+  urgent: 'moved',
+  calm: 'default',
+  settled: 'success',
+  missed: 'removed',
+  none: 'default',
+};
+
+const countsText = (c: Glance['counts']): string => `${c.approved} approved, ${c.waiting} waiting, ${c.rejected} rejected`;
+
+/** The contract at a glance: the deadline, the one next step with its button, and the counts. */
+function GlanceCard({ glance, onGo }: { glance: Glance; onGo: (section: FoldKey) => void }) {
+  const { deadline, next, counts, nextDate } = glance;
+  return (
+    <Box xcss={glanceBox}>
+      <Stack space="space.150">
+        <Inline space="space.100" alignBlock="center" shouldWrap>
+          <Text>
+            <Strong>{deadline.text}</Strong>
+          </Text>
+          {deadline.label && <Lozenge appearance={TONE[deadline.tone]}>{deadline.label}</Lozenge>}
+        </Inline>
+        <Stack space="space.050">
+          <Text size="small">Next step</Text>
+          <Heading size="small">{next.title}</Heading>
+          <Text>{next.detail}</Text>
+        </Stack>
+        <Inline space="space.200" alignBlock="center" shouldWrap>
+          {next.action && next.section && (
+            <Button appearance="primary" onClick={() => onGo(next.section as FoldKey)}>
+              {next.action}
+            </Button>
+          )}
+          <Text size="small">
+            Obligations: {countsText(counts)}
+            {nextDate ? `. Next date ${nextDate.due}.` : '.'}
+          </Text>
+        </Inline>
+      </Stack>
+    </Box>
+  );
+}
+
+/** A section folded to one line, with what it holds, until a person opens it. */
+function Fold({ title, summary, open, onToggle, children }: { title: string; summary: string; open: boolean; onToggle: () => void; children: React.ReactNode }) {
+  if (!open) {
+    return (
+      <Box xcss={card}>
+        <Inline space="space.100" alignBlock="center" spread="space-between">
+          <Stack space="space.025">
+            <Text>
+              <Strong>{title}</Strong>
+            </Text>
+            <Text size="small">{summary}</Text>
+          </Stack>
+          <Button appearance="subtle" onClick={onToggle}>
+            Show
+          </Button>
+        </Inline>
+      </Box>
+    );
+  }
+  return (
+    <Stack space="space.050">
+      <Inline alignInline="end">
+        <Button appearance="subtle" spacing="compact" onClick={onToggle}>
+          {`Hide ${title.toLowerCase()}`}
+        </Button>
+      </Inline>
+      {children}
+    </Stack>
+  );
+}
+
+/** Only the section the next step points at starts open. Without a glance, everything does, as before. */
+const initialOpen = (glance: RunView['glance']): Record<FoldKey, boolean> => {
+  const all = glance === null;
+  const section = glance?.next.section ?? null;
+  return {
+    decision: all || section === 'decision',
+    obligations: all || section === 'obligations',
+    details: all || section === 'details',
+    terms: all || section === 'terms',
+    calendar: all,
+  };
+};
+
+function detailsSummary(details: NonNullable<RunView['details']>): string {
+  if (details.status === 'queued' || details.status === 'running') return 'Reading the notices clause, the contract value and the service levels.';
+  if (details.status !== 'done') return 'Not read yet.';
+  const parts = [details.sendBy ? `Latest send-by date ${details.sendBy}` : 'Delivery methods and send-by dates', 'the drafted notice', 'the contract value', "the supplier's record"];
+  return `${parts.join(', ')}.`;
+}
+
 function RunPanel({
   contract,
   run,
@@ -276,6 +382,10 @@ function RunPanel({
 }) {
   const [label, appearance] = RUN_LABEL[run.status];
   const took = run.finishedAtMs !== null && run.startedAtMs !== null ? run.finishedAtMs - run.startedAtMs : null;
+  const [open, setOpen] = useState<Record<FoldKey, boolean>>(() => initialOpen(run.glance));
+  const toggle = (key: FoldKey) => setOpen((o) => ({ ...o, [key]: !o[key] }));
+  const show = (key: FoldKey) => setOpen((o) => ({ ...o, [key]: true }));
+  const termsToCheck = run.facts.filter((f) => f.status === 'needs_review').length;
   return (
     <Stack space="space.200">
       <Inline space="space.100" alignBlock="center" shouldWrap>
@@ -309,24 +419,67 @@ function RunPanel({
 
       {(run.status === 'needs_review' || run.status === 'approved') && (
         <Stack space="space.200">
+          {run.glance && <GlanceCard glance={run.glance} onGo={show} />}
           <Text size="small">
             {!run.paginated ? 'Read the Word file' : run.pages === null ? 'Read the file' : `Read ${run.pages} page${run.pages === 1 ? '' : 's'}`}
             {took !== null ? ` in ${seconds(took)}` : ''} with {run.model}: {run.llmCalls} model {run.llmCalls === 1 ? 'call' : 'calls'}, {run.inputTokens.toLocaleString('en')}{' '}
             input and {run.outputTokens.toLocaleString('en')} output tokens. {run.quotesVerified} of {run.quotesReturned} quotes were found word for word in the contract
             {run.rejectedCount > 0 ? `; ${run.rejectedCount} items without a matching quote were dropped` : ''}.
           </Text>
-          {run.brief && <RenewalBrief contractId={contract.id} termIndex={contract.termIndex} brief={run.brief} busy={actions.busy !== null} run={runAction} />}
-          <Facts run={run} onEdit={onEditTerms} />
-          <HolidayCalendar contractId={contract.id} calendar={contract.calendar} run={runAction} />
-          {run.brief && run.details && <DetailsSection contractId={contract.id} details={run.details} brief={run.brief} run={runAction} busy={actions.busy !== null} />}
-          <Heading size="xsmall">
-            {run.counts.total === 0
-              ? 'No dated obligations were found'
-              : `Obligations: ${run.counts.approved} approved, ${run.counts.rejected} rejected, ${run.counts.waiting} waiting`}
-          </Heading>
-          {run.obligations.map((item) => (
-            <ObligationCard key={item.id} item={item} actions={actions} />
-          ))}
+          {run.brief && (
+            <Fold
+              title="Renewal decision"
+              summary={run.glance ? `${run.glance.deadline.text}.${run.glance.deadline.label ? ` ${run.glance.deadline.label}.` : ''}` : 'The notice deadline and the decision.'}
+              open={open.decision}
+              onToggle={() => toggle('decision')}
+            >
+              <RenewalBrief contractId={contract.id} termIndex={contract.termIndex} brief={run.brief} busy={actions.busy !== null} run={runAction} />
+            </Fold>
+          )}
+          <Fold
+            title="Obligations"
+            summary={run.counts.total === 0 ? 'No dated obligations were found.' : `${run.glance ? countsText(run.glance.counts) : `${run.counts.total} found`}.`}
+            open={open.obligations}
+            onToggle={() => toggle('obligations')}
+          >
+            <Stack space="space.200">
+              <Heading size="xsmall">
+                {run.counts.total === 0
+                  ? 'No dated obligations were found'
+                  : `Obligations: ${run.counts.approved} approved, ${run.counts.rejected} rejected, ${run.counts.waiting} waiting`}
+              </Heading>
+              {run.obligations.map((item) => (
+                <ObligationCard key={item.id} item={item} actions={actions} />
+              ))}
+            </Stack>
+          </Fold>
+          {run.brief && run.details && (
+            <Fold title="Notices, value and supplier record" summary={detailsSummary(run.details)} open={open.details} onToggle={() => toggle('details')}>
+              <DetailsSection contractId={contract.id} details={run.details} brief={run.brief} run={runAction} busy={actions.busy !== null} />
+            </Fold>
+          )}
+          <Fold
+            title="Contract terms"
+            summary={
+              termsToCheck > 0
+                ? `${termsToCheck} waiting for a person to check.`
+                : run.terms?.currentTerm
+                  ? `Term ${run.terms.currentTerm.number}: ${run.terms.currentTerm.start} to ${run.terms.currentTerm.end}.`
+                  : 'Effective date, term and renewal.'
+            }
+            open={open.terms}
+            onToggle={() => toggle('terms')}
+          >
+            <Facts run={run} onEdit={onEditTerms} />
+          </Fold>
+          <Fold
+            title="Business days"
+            summary={`${contract.calendar.name}${contract.calendar.usedBy > 0 ? `, used by ${contract.calendar.usedBy} obligation${contract.calendar.usedBy === 1 ? '' : 's'}` : ''}.`}
+            open={open.calendar}
+            onToggle={() => toggle('calendar')}
+          >
+            <HolidayCalendar contractId={contract.id} calendar={contract.calendar} run={runAction} />
+          </Fold>
         </Stack>
       )}
     </Stack>
@@ -497,6 +650,7 @@ const App = () => {
 
       {current?.run && (
         <RunPanel
+          key={current.id}
           contract={current}
           run={current.run}
           nowMs={view.nowMs}

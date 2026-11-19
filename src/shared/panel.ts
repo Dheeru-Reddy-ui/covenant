@@ -3,6 +3,7 @@
  * holds types only: the frontend bundle must not pull in server code.
  */
 
+import type { Glance } from '../../packages/core/src/glance';
 import type { DetailsView } from './details';
 import type { EvidenceView } from './evidence';
 
@@ -191,6 +192,8 @@ export interface RunView {
   brief: BriefView | null;
   /** Parties, notices, value and service levels from the second reading. Null until the run is reviewable. */
   details: DetailsView | null;
+  /** The contract at a glance: the deadline line, counts, the next date and the one next step. Null until the run is reviewable. */
+  glance: Glance | null;
 }
 
 /** The contract's holiday list and the business-day rule it gives, in words. */

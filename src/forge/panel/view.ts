@@ -6,6 +6,7 @@ import {
   type ReviewReason,
   type Schedule,
   canApprove,
+  contractGlance,
   currentTermIndex,
   describeCalendar,
   instructionSigns,
@@ -222,6 +223,28 @@ async function runView(run: repo.RunRow, contract: repo.ContractRow, today: stri
     return view;
   });
 
+  const facts = reviewable ? factViews(run, byId) : [];
+  const details = brief === null ? null : await detailsView({ contract, run, obligations, clauses: byId, state: extras.state, decisions: [...extras.decisions] }, brief);
+  const glance =
+    brief === null
+      ? null
+      : contractGlance({
+          window: brief.window,
+          decided: brief.decided,
+          obligations: views.map((v) => ({
+            summary: v.summary,
+            decision: v.decision,
+            needsReview: v.needsReview,
+            due: v.schedule.due,
+            upcoming: v.schedule.status !== 'undated' && v.schedule.due !== null && v.schedule.due >= today,
+            notice: v.kind === 'renewal_notice',
+          })),
+          termsToCheck: facts.filter((f) => f.status === 'needs_review').length,
+          valueAwaiting:
+            details !== null && details.values.some((v) => v.decision === 'pending') && !details.values.some((v) => v.decision === 'confirmed'),
+          sendBy: details?.sendBy ?? null,
+        });
+
   return {
     id: run.id,
     status,
@@ -241,7 +264,7 @@ async function runView(run: repo.RunRow, contract: repo.ContractRow, today: stri
     pages: run.pages,
     paginated: run.paginated,
     terms: reviewable ? termsView(run.terms, run.autoRenew, contract, today) : null,
-    facts: reviewable ? factViews(run, byId) : [],
+    facts,
     obligations: views,
     counts: {
       total: views.length,
@@ -250,7 +273,8 @@ async function runView(run: repo.RunRow, contract: repo.ContractRow, today: stri
       rejected: views.filter((v) => v.decision === 'rejected').length,
     },
     brief,
-    details: brief === null ? null : await detailsView({ contract, run, obligations, clauses: byId, state: extras.state, decisions: [...extras.decisions] }, brief),
+    details,
+    glance,
   };
 }
 
